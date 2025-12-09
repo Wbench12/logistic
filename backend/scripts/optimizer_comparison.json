@@ -1,0 +1,170 @@
+{
+  "before": {
+    "trips": {
+      "C1-T1": {
+        "company": "Company_Hydra",
+        "orig": [
+          36.7531,
+          2.9958
+        ],
+        "dest": [
+          36.7606,
+          3.0586
+        ],
+        "time": "480-600",
+        "duration": 30
+      },
+      "C1-T2": {
+        "company": "Company_Hydra",
+        "orig": [
+          36.7606,
+          3.0586
+        ],
+        "dest": [
+          36.789,
+          3.0412
+        ],
+        "time": "630-750",
+        "duration": 30
+      },
+      "C1-T3": {
+        "company": "Company_Hydra",
+        "orig": [
+          36.789,
+          3.0412
+        ],
+        "dest": [
+          36.7606,
+          3.0586
+        ],
+        "time": "840-1020",
+        "duration": 35
+      },
+      "C2-T1": {
+        "company": "Company_Kouba",
+        "orig": [
+          36.7308,
+          3.0839
+        ],
+        "dest": [
+          36.712,
+          3.1042
+        ],
+        "time": "540-660",
+        "duration": 45
+      },
+      "C2-T2": {
+        "company": "Company_Kouba",
+        "orig": [
+          36.712,
+          3.1042
+        ],
+        "dest": [
+          36.7531,
+          2.9958
+        ],
+        "time": "780-960",
+        "duration": 40
+      },
+      "C3-T1": {
+        "company": "ThirdParty",
+        "orig": [
+          36.74,
+          3.02
+        ],
+        "dest": [
+          36.7308,
+          3.0839
+        ],
+        "time": "510-690",
+        "duration": 30
+      }
+    },
+    "vehicles": {
+      "V1": {
+        "owner": "Company_Hydra",
+        "depot": [
+          36.7531,
+          2.9958
+        ],
+        "capacity": 6
+      },
+      "V2": {
+        "owner": "Company_Kouba",
+        "depot": [
+          36.7308,
+          3.0839
+        ],
+        "capacity": 4
+      },
+      "V3": {
+        "owner": "ThirdParty",
+        "depot": [
+          36.74,
+          3.02
+        ],
+        "capacity": 8
+      },
+      "V4": {
+        "owner": "Company_Hydra",
+        "depot": [
+          36.7531,
+          2.9958
+        ],
+        "capacity": 4
+      }
+    }
+  },
+  "per_company": {
+    "assignments": {
+      "V4": [
+        "C1-T1",
+        "C1-T2",
+        "C1-T3"
+      ]
+    },
+    "metrics": {
+      "Company_Hydra": {
+        "solve_time_s": 0.01872563362121582,
+        "objective": 1.0,
+        "metrics": {
+          "solve_time_s": 0.01860523223876953,
+          "num_assignments": 1,
+          "num_vehicles_used": 1,
+          "total_return_distance": 18.0,
+          "solver_status": "OPTIMAL"
+        }
+      }
+    },
+    "diagnostics": [
+      "Company Company_Kouba run status: INFEASIBLE diag: ['Total vehicle capacity 4 < total demand 5']",
+      "Company ThirdParty run status: INFEASIBLE diag: ['No feasible solution']"
+    ]
+  },
+  "shared": {
+    "assignments": {
+      "V2": [
+        "C2-T2"
+      ],
+      "V3": [
+        "C1-T1",
+        "C3-T1",
+        "C2-T1",
+        "C1-T2",
+        "C1-T3"
+      ]
+    },
+    "metrics": {
+      "solve_time_s": 0.07722640037536621,
+      "objective": 2.0,
+      "metrics": {
+        "solve_time_s": 0.0766758918762207,
+        "num_assignments": 2,
+        "num_vehicles_used": 2,
+        "total_return_distance": 36.0,
+        "solver_status": "OPTIMAL"
+      }
+    },
+    "diagnostics": []
+  }
+}

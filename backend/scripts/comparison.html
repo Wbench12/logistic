@@ -1,0 +1,294 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Optimizer Comparison — Standalone</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 10px; background: #f6f7fb; color: #222; }
+    h2 { margin: 6px 0 12px 0; }
+    #map { height: 66vh; width: 100%; border-radius: 6px; box-shadow: 0 1px 6px rgba(0,0,0,0.08); }
+    .panel { background: #fff; padding: 10px; margin-top: 10px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .row { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+    .box { padding:8px; border-radius:6px; background:#fafafa; border:1px solid #eee; min-width:180px; }
+    pre { background:#f7f7f9; padding:8px; max-height:180px; overflow:auto; border-radius:4px; }
+    .legend { display:flex; gap:12px; flex-direction:column; }
+    .legend .item { display:flex; gap:8px; align-items:center; }
+    .colorbox { width:18px; height:12px; border:1px solid #333; display:inline-block; }
+    .small { font-size:0.9em; color:#444; }
+    label { font-weight:600; margin-right:6px; }
+    .title-row { display:flex; align-items:center; gap:12px; }
+  </style>
+</head>
+<body>
+  <div class="title-row">
+    <h2>Optimizer Comparison — Standalone</h2>
+    <div class="small">Before = uploaded journals · Per-company = each company uses its own fleet · Shared = platform optimization</div>
+  </div>
+
+  <!-- Embedded JSON (your data) -->
+  <script id="optimizer-data" type="application/json">
+{
+  "before": {
+    "trips": {
+      "C1-T1": {
+        "company": "Company_Hydra",
+        "orig": [36.7531, 2.9958],
+        "dest": [36.7606, 3.0586],
+        "time": "480-600",
+        "duration": 30
+      },
+      "C1-T2": {
+        "company": "Company_Hydra",
+        "orig": [36.7606, 3.0586],
+        "dest": [36.789, 3.0412],
+        "time": "630-750",
+        "duration": 30
+      },
+      "C1-T3": {
+        "company": "Company_Hydra",
+        "orig": [36.789, 3.0412],
+        "dest": [36.7606, 3.0586],
+        "time": "840-1020",
+        "duration": 35
+      },
+      "C2-T1": {
+        "company": "Company_Kouba",
+        "orig": [36.7308, 3.0839],
+        "dest": [36.712, 3.1042],
+        "time": "540-660",
+        "duration": 45
+      },
+      "C2-T2": {
+        "company": "Company_Kouba",
+        "orig": [36.712, 3.1042],
+        "dest": [36.7531, 2.9958],
+        "time": "780-960",
+        "duration": 40
+      },
+      "C3-T1": {
+        "company": "ThirdParty",
+        "orig": [36.74, 3.02],
+        "dest": [36.7308, 3.0839],
+        "time": "510-690",
+        "duration": 30
+      }
+    },
+    "vehicles": {
+      "V1": {
+        "owner": "Company_Hydra",
+        "depot": [36.7531, 2.9958],
+        "capacity": 6
+      },
+      "V2": {
+        "owner": "Company_Kouba",
+        "depot": [36.7308, 3.0839],
+        "capacity": 4
+      },
+      "V3": {
+        "owner": "ThirdParty",
+        "depot": [36.74, 3.02],
+        "capacity": 8
+      },
+      "V4": {
+        "owner": "Company_Hydra",
+        "depot": [36.7531, 2.9958],
+        "capacity": 4
+      }
+    }
+  },
+  "per_company": {
+    "assignments": {
+      "V4": ["C1-T1","C1-T2","C1-T3"]
+    },
+    "metrics": {
+      "Company_Hydra": {
+        "solve_time_s": 0.01872563362121582,
+        "objective": 1.0,
+        "metrics": {
+          "solve_time_s": 0.01860523223876953,
+          "num_assignments": 1,
+          "num_vehicles_used": 1,
+          "total_return_distance": 18.0,
+          "solver_status": "OPTIMAL"
+        }
+      }
+    },
+    "diagnostics": [
+      "Company Company_Kouba run status: INFEASIBLE diag: ['Total vehicle capacity 4 < total demand 5']",
+      "Company ThirdParty run status: INFEASIBLE diag: ['No feasible solution']"
+    ]
+  },
+  "shared": {
+    "assignments": {
+      "V2": ["C2-T2"],
+      "V3": ["C1-T1","C3-T1","C2-T1","C1-T2","C1-T3"]
+    },
+    "metrics": {
+      "solve_time_s": 0.07722640037536621,
+      "objective": 2.0,
+      "metrics": {
+        "solve_time_s": 0.0766758918762207,
+        "num_assignments": 2,
+        "num_vehicles_used": 2,
+        "total_return_distance": 36.0,
+        "solver_status": "OPTIMAL"
+      }
+    },
+    "diagnostics": []
+  }
+}
+  </script>
+
+  <div id="map"></div>
+
+  <div class="panel row" style="margin-top:10px;">
+    <div class="box">
+      <strong>Before</strong>
+      <div id="beforeSummary" class="small"></div>
+    </div>
+    <div class="box">
+      <strong>Per-company-only</strong>
+      <div id="perCompanySummary" class="small"></div>
+    </div>
+    <div class="box">
+      <strong>Shared (platform)</strong>
+      <div id="sharedSummary" class="small"></div>
+    </div>
+    <div style="margin-left:auto" class="box legend">
+      <strong>Legend</strong>
+      <div class="item"><span class="colorbox" style="background:#e41a1c"></span> Vehicle route (colored)</div>
+      <div class="item"><span style="display:inline-block;width:14px;height:12px;border:2px solid #333"></span> Depot marker</div>
+      <div class="item"><span style="display:inline-block;width:10px;height:10px;background:#111;border-radius:50%"></span> Trip origin/destination</div>
+      <div class="item"><span style="display:inline-block;width:26px;height:8px;border-top:2px dashed #666"></span> Uploaded trip (before)</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <strong>Diagnostics</strong>
+    <pre id="diag">No diagnostics</pre>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    (function(){
+      // Parse embedded JSON
+      const raw = document.getElementById('optimizer-data').textContent;
+      const DATA = JSON.parse(raw);
+
+      // Helper: convert [lat,lon] to L.latLng
+      function latlng(a) { return [a[0], a[1]]; }
+
+      // Create map centered on data average
+      const tripsObj = DATA.before.trips;
+      const vehiclesObj = DATA.before.vehicles;
+      const allPoints = [];
+      Object.values(tripsObj).forEach(t => { allPoints.push(t.orig); allPoints.push(t.dest); });
+      Object.values(vehiclesObj).forEach(v => { allPoints.push(v.depot); });
+      const avgLat = allPoints.reduce((s,p)=>s+p[0],0)/allPoints.length;
+      const avgLon = allPoints.reduce((s,p)=>s+p[1],0)/allPoints.length;
+
+      const map = L.map('map').setView([avgLat, avgLon], 12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+      // Layers
+      const beforeLayer = L.layerGroup().addTo(map);
+      const perCompanyLayer = L.layerGroup().addTo(map);
+      const sharedLayer = L.layerGroup().addTo(map);
+
+      L.control.layers(null, {
+        "Before (journals)": beforeLayer,
+        "Per-company-only": perCompanyLayer,
+        "Shared (platform)": sharedLayer
+      }, { collapsed: false }).addTo(map);
+
+      // Palette generator
+      const PALETTE = ['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#ffff33','#a65628','#f781bf','#999999'];
+      function colorFor(vid) {
+        let h = 0;
+        for (let i = 0; i < vid.length; i++) h = (h * 31 + vid.charCodeAt(i)) % PALETTE.length;
+        return PALETTE[h];
+      }
+
+      // BEFORE: draw trip dashed polylines and origin/dest markers; draw depots
+      const beforePoints = [];
+      Object.entries(tripsObj).forEach(([tid, t]) => {
+        const orig = latlng(t.orig);
+        const dest = latlng(t.dest);
+        L.polyline([orig,dest], {dashArray: '6 6', weight: 2}).bindPopup(`<b>${tid}</b><br>${t.company}<br>${t.time}`).addTo(beforeLayer);
+        L.circleMarker(orig, {radius:4}).bindPopup(`<b>Origin ${tid}</b><br>${t.company}`).addTo(beforeLayer);
+        L.circleMarker(dest, {radius:4}).bindPopup(`<b>Dest ${tid}</b><br>${t.company}`).addTo(beforeLayer);
+        beforePoints.push(orig); beforePoints.push(dest);
+      });
+      Object.entries(vehiclesObj).forEach(([vid, v]) => {
+        const d = latlng(v.depot);
+        L.marker(d).bindPopup(`<b>Depot ${vid}</b><br>owner=${v.owner}<br>cap=${v.capacity}`).addTo(beforeLayer);
+        beforePoints.push(d);
+      });
+
+      // PER-COMPANY: draw assignments
+      const per = DATA.per_company || {};
+      Object.entries(per.assignments || {}).forEach(([vid, seq]) => {
+        const vehicle = vehiclesObj[vid];
+        if (!vehicle) return;
+        const color = colorFor(vid);
+        const latlngs = [[vehicle.depot[0], vehicle.depot[1]]];
+        seq.forEach(tid => {
+          const t = tripsObj[tid];
+          if (!t) return;
+          latlngs.push([t.orig[0], t.orig[1]]);
+          latlngs.push([t.dest[0], t.dest[1]]);
+        });
+        L.polyline(latlngs, {color: color, weight: 3}).bindPopup(`<b>Per-company ${vid}</b><br>owner=${vehicle.owner}`).addTo(perCompanyLayer);
+      });
+
+      // SHARED: draw assignments
+      const shared = DATA.shared || {};
+      Object.entries(shared.assignments || {}).forEach(([vid, seq]) => {
+        const vehicle = vehiclesObj[vid];
+        if (!vehicle) return;
+        const color = colorFor(vid);
+        const latlngs = [[vehicle.depot[0], vehicle.depot[1]]];
+        seq.forEach(tid => {
+          const t = tripsObj[tid];
+          if (!t) return;
+          latlngs.push([t.orig[0], t.orig[1]]);
+          latlngs.push([t.dest[0], t.dest[1]]);
+        });
+        L.polyline(latlngs, {color: color, weight: 3}).bindPopup(`<b>Shared ${vid}</b><br>owner=${vehicle.owner}`).addTo(sharedLayer);
+      });
+
+      // Fit bounds
+      const allLatLng = beforePoints;
+      if (allLatLng.length) {
+        const bounds = L.latLngBounds(allLatLng);
+        map.fitBounds(bounds.pad(0.18));
+      }
+
+      // Summaries and diagnostics
+      function summarizeScenario(scen) {
+        if (!scen) return 'No data';
+        const assignments = scen.assignments || {};
+        const vehiclesUsed = Object.keys(assignments).length;
+        const tripsAssigned = Object.values(assignments).reduce((s,a) => s + (a ? a.length : 0), 0);
+        const diag = scen.diagnostics || [];
+        const objective = scen.metrics && (scen.metrics.objective !== undefined) ? scen.metrics.objective :
+                          (scen.metrics && scen.metrics.metrics && scen.metrics.metrics.num_assignments ? scen.metrics.metrics.num_assignments : 'n/a');
+        return `vehicles_used: ${vehiclesUsed}\ntrips_assigned: ${tripsAssigned}\nobjective: ${objective}\ndiag: ${diag.join('; ')}`;
+      }
+
+      document.getElementById('beforeSummary').innerText = `trips: ${Object.keys(tripsObj).length}\nvehicles: ${Object.keys(vehiclesObj).length}`;
+      document.getElementById('perCompanySummary').innerText = summarizeScenario(per);
+      document.getElementById('sharedSummary').innerText = summarizeScenario(shared);
+
+      const diagList = [];
+      if (per.diagnostics && per.diagnostics.length) diagList.push('Per-company diagnostics:\\n' + per.diagnostics.join('\\n'));
+      if (shared.diagnostics && shared.diagnostics.length) diagList.push('Shared diagnostics:\\n' + shared.diagnostics.join('\\n'));
+      document.getElementById('diag').innerText = (diagList.length ? diagList.join('\\n\\n') : 'No diagnostics');
+
+    })();
+  </script>
+</body>
+</html>
+

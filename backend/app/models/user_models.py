@@ -31,11 +31,24 @@ class UpdatePassword(SQLModel):
     current_password: str = Field(min_length=8, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
+
+class NewPassword(SQLModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class Token(SQLModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenPayload(SQLModel):
+    sub: Optional[str] = None
+
 class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
-    companies: List["Company"] = Relationship(back_populates="owner")  # type: ignore[name-defined]
-    optimization_jobs: List["OptimizationJob"] = Relationship(back_populates="owner")  # type: ignore[name-defined]
+    companies: List["Company"] = Relationship(back_populates="user")  # type: ignore[name-defined]
 
 class UserPublic(UserBase):
     id: uuid.UUID
@@ -43,3 +56,7 @@ class UserPublic(UserBase):
 class UsersPublic(SQLModel):
     data: List[UserPublic]
     count: int
+
+
+class Message(SQLModel):
+    message: str

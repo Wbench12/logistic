@@ -15,7 +15,7 @@ This script:
 - runs SharedOptimizer.optimize and prints results grouped by company and vehicle owner
 """
 
-from app.services.solver import SharedOptimizer, Trip, Vehicle, Config
+# from app.services.solver import SharedOptimizer, Trip, Vehicle, Config
 import pprint
 import uuid
 

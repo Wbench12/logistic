@@ -1,5 +1,5 @@
 # scripts/run_optimizer.py
-from app.services.solver import SharedOptimizer, Trip, Vehicle, Config
+# from app.services.solver import SharedOptimizer, Trip, Vehicle, Config
 import uuid
 
 def sample_data():

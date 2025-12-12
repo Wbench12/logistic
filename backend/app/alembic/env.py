@@ -18,8 +18,11 @@ fileConfig(config.config_file_name)
 # target_metadata = mymodel.Base.metadata
 # target_metadata = None
 
-from app.models import SQLModel  # noqa
-from app.core.config import settings # noqa
+from app.core.config import settings  # noqa
+from sqlmodel import SQLModel
+
+# Ensure the tables defined in each module are registered with SQLModel.metadata.
+from app.models import company_models, trip_models, user_models  # noqa: F401
 
 target_metadata = SQLModel.metadata
 

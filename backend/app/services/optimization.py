@@ -1,481 +1,453 @@
+"""
+Constraint Programming (CP-SAT) based trip optimization service
+Uses OR-Tools CP-SAT solver instead of MILP for better performance
+"""
+import math
 import uuid
 from collections import defaultdict
-from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
+from typing import DefaultDict
 
 from ortools.sat.python import cp_model
+from sqlmodel import Session
 
-from app.models.optimization_full_models import (
-    OptimizationResult,
-    AssignmentResult,
-    Trip,
-    Vehicle,
-    Config,
-    JobStatus,
-    OptimizationGroup
+from app.models.company_models import Vehicle, VehicleCategory
+from app.models.trip_models import CargoCategory, Trip
+from app.crud import (
+    get_trips_for_date,
+    get_available_vehicles_by_category,
+    create_optimization_batch,
+    update_optimization_batch
 )
-from app.core.db import engine
-from sqlmodel import Session, select
 
+# ============= DISTANCE CALCULATION =============
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance in km between two lat/lng points"""
+    R = 6371  # Earth's radius in kilometers
+    
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    
+    a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    
+    return R * c
 
-class OptimizationService:
-    def __init__(self):
-        self.model = None
-        self.solver = None
-        
-    def solve_optimization(self, request_data: Dict[str, Any]) -> OptimizationResult:
-        """
-        Main optimization method that orchestrates the CP-SAT solving process.
-        """
+def calculate_trip_distance(trip: Trip) -> float:
+    """Calculate trip distance if coordinates are available"""
+    departure_lat = trip.departure_lat
+    departure_lng = trip.departure_lng
+    arrival_lat = trip.arrival_lat
+    arrival_lng = trip.arrival_lng
+
+    if (
+        departure_lat is None
+        or departure_lng is None
+        or arrival_lat is None
+        or arrival_lng is None
+    ):
+        return 0.0
+
+    return haversine_distance(
+        departure_lat,
+        departure_lng,
+        arrival_lat,
+        arrival_lng
+    )
+
+# ============= TRIP GROUPING =============
+def group_trips_by_compatibility(
+    trips: list[Trip],
+) -> dict[VehicleCategory, list[Trip]]:
+    """
+    Group trips by vehicle category compatibility
+    Key: vehicle_category, Value: list of compatible trips
+    """
+    groups: DefaultDict[VehicleCategory, list[Trip]] = defaultdict(list)
+    
+    for trip in trips:
+        # Map cargo category to compatible vehicle categories
+        # This is simplified - expand based on your Liste 01 & 02 mappings
+        vehicle_category = get_compatible_vehicle_category(trip.cargo_category)
+        groups[vehicle_category].append(trip)
+    
+    return dict(groups)
+
+def get_compatible_vehicle_category(
+    cargo_category: CargoCategory | str,
+) -> VehicleCategory:
+    """
+    Map cargo category to vehicle category
+    Simplified version - expand based on your full mappings
+    """
+    if isinstance(cargo_category, str):
         try:
-            # Extract data from request
-            company_id = request_data["company_id"]
-            optimization_group_id = request_data["optimization_group_id"]
-            config = request_data.get("config", {})
+            cargo_enum = CargoCategory(cargo_category)
+        except ValueError:
+            return VehicleCategory.IN1
+    else:
+        cargo_enum = cargo_category
+
+    mapping: dict[CargoCategory, VehicleCategory] = {
+        # Agroalimentaire cargo -> Agroalimentaire vehicles
+        CargoCategory.A01: VehicleCategory.AG1,
+        CargoCategory.A02: VehicleCategory.AG2,
+        CargoCategory.A03: VehicleCategory.AG5,
+        
+        # Construction cargo -> Construction vehicles
+        CargoCategory.B01: VehicleCategory.BT1,
+        CargoCategory.B02: VehicleCategory.BT4,
+        
+        # Default mapping for other categories can be expanded here
+    }
+    return mapping.get(cargo_enum, VehicleCategory.IN1)
+
+# ============= CP-SAT SOLVER =============
+class TripOptimizationSolver:
+    """
+    CP-SAT based solver for trip chaining optimization
+    Objective: Minimize number of empty returns by maximizing trip chaining
+    """
+    
+    def __init__(self, trips: list[Trip], vehicles: list[Vehicle]):
+        self.trips = trips
+        self.vehicles = vehicles
+        self.model = cp_model.CpModel()
+        self.solver = cp_model.CpSolver()
+        
+        # Decision variables
+        self.x: dict[tuple[int, int], cp_model.IntVar] = {}  # x[v,i] = 1 if vehicle v does trip i
+        self.y: dict[tuple[int, int, int], cp_model.IntVar] = {}  # y[v,i,j] = 1 if vehicle v chains trip i->j
+        self.l: dict[int, cp_model.IntVar] = {}  # l[v] = 1 if vehicle v returns empty
+        
+        # Time variables (in minutes since midnight)
+        self.t_start: dict[int, cp_model.IntVar] = {}  # Start time of trip i
+        self.t_end: dict[int, cp_model.IntVar] = {}    # End time of trip i
+        
+    def build_model(self):
+        """Build the CP-SAT model"""
+        num_trips = len(self.trips)
+        num_vehicles = len(self.vehicles)
+        
+        # Create decision variables
+        for v_idx, vehicle in enumerate(self.vehicles):
+            self.l[v_idx] = self.model.NewBoolVar(f'return_{v_idx}')
             
-            # Get trips and vehicles for this optimization group
-            trips_data, vehicles_data = self._get_optimization_data(
-                company_id, optimization_group_id
-            )
-            
-            if not trips_data or not vehicles_data:
-                return OptimizationResult(
-                    job_id=uuid.uuid4(),  # Will be replaced by actual job ID
-                    status=JobStatus.INFEASIBLE,
-                    diagnostics=["No trips or vehicles found for optimization group"]
+            for i_idx, trip_i in enumerate(self.trips):
+                self.x[(v_idx, i_idx)] = self.model.NewBoolVar(f'x_{v_idx}_{i_idx}')
+                
+                # Time windows (in minutes)
+                min_start = int(trip_i.departure_datetime.hour * 60 + trip_i.departure_datetime.minute)
+                max_start = int(trip_i.arrival_datetime_planned.hour * 60 + trip_i.arrival_datetime_planned.minute)
+                
+                self.t_start[i_idx] = self.model.NewIntVar(min_start, max_start, f't_start_{i_idx}')
+                self.t_end[i_idx] = self.model.NewIntVar(min_start, max_start + 240, f't_end_{i_idx}')  # +4h buffer
+                
+                # Chaining variables
+                for j_idx, trip_j in enumerate(self.trips):
+                    if i_idx != j_idx:
+                        self.y[(v_idx, i_idx, j_idx)] = self.model.NewBoolVar(f'y_{v_idx}_{i_idx}_{j_idx}')
+        
+        # CONSTRAINT 1: Each trip assigned to exactly one vehicle
+        for i_idx in range(num_trips):
+            self.model.Add(sum(self.x[(v, i_idx)] for v in range(num_vehicles)) == 1)
+        
+        # CONSTRAINT 2: Chaining is only possible if both trips assigned to same vehicle
+        for v_idx in range(num_vehicles):
+            for i_idx in range(num_trips):
+                for j_idx in range(num_trips):
+                    if i_idx != j_idx:
+                        # y[v,i,j] <= x[v,i]
+                        self.model.Add(self.y[(v_idx, i_idx, j_idx)] <= self.x[(v_idx, i_idx)])
+                        # y[v,i,j] <= x[v,j]
+                        self.model.Add(self.y[(v_idx, i_idx, j_idx)] <= self.x[(v_idx, j_idx)])
+        
+        # CONSTRAINT 3: Arrival point = Departure point for chained trips
+        for v_idx in range(num_vehicles):
+            for i_idx in range(num_trips):
+                for j_idx in range(num_trips):
+                    if i_idx != j_idx:
+                        trip_i = self.trips[i_idx]
+                        trip_j = self.trips[j_idx]
+                        
+                        # Geographic constraint: arrival of i must match departure of j
+                        if not self._are_points_compatible(trip_i, trip_j):
+                            self.model.Add(self.y[(v_idx, i_idx, j_idx)] == 0)
+        
+        # CONSTRAINT 4: Capacity constraint
+        for v_idx, vehicle in enumerate(self.vehicles):
+            for i_idx, trip in enumerate(self.trips):
+                # If trip assigned, weight must not exceed capacity
+                capacity_kg = vehicle.capacity_tons * 1000 if vehicle.capacity_tons else float('inf')
+                if trip.cargo_weight_kg > capacity_kg:
+                    self.model.Add(self.x[(v_idx, i_idx)] == 0)
+        
+        # CONSTRAINT 5: Temporal sequencing
+        for v_idx in range(num_vehicles):
+            for i_idx in range(num_trips):
+                trip_i = self.trips[i_idx]
+                duration_i = self._estimate_duration(trip_i)
+                
+                # End time = Start time + Duration
+                self.model.Add(self.t_end[i_idx] == self.t_start[i_idx] + duration_i).OnlyEnforceIf(
+                    self.x[(v_idx, i_idx)]
                 )
-            
-            # Build and solve the CP-SAT model
-            solution = self._build_and_solve_cpsat_model(
-                trips_data, vehicles_data, config
-            )
-            
-            return solution
-            
-        except Exception as e:
-            return OptimizationResult(
-                job_id=uuid.uuid4(),
-                status=JobStatus.FAILED,
-                diagnostics=[f"Optimization failed: {str(e)}"]
-            )
-    
-    def _get_optimization_data(self, company_id: uuid.UUID, optimization_group_id: uuid.UUID) -> Tuple[List[Dict], List[Dict]]:
-        """
-        Get trips and vehicles data for the optimization group.
-        """
-        with Session(engine) as session:
-            # Get optimization group
-            optimization_group = session.get(OptimizationGroup, optimization_group_id)
-            if not optimization_group:
-                return [], []
-            
-            # Get trips for this company and product categories compatible with the vehicle category
-            product_category_ids = session.exec(
-                select(ProductCategory.id)
-                .where(ProductCategory.sector == optimization_group.sector)
-            ).all()
-            
-            trip_stmt = (
-                select(Trip)
-                .where(Trip.company_id == company_id)
-                .where(Trip.product_category_id.in_(product_category_ids))
-            )
-            trips = session.exec(trip_stmt).all()
-            
-            # Get vehicles for this company and the specific vehicle category
-            vehicle_stmt = (
-                select(Vehicle)
-                .where(Vehicle.company_id == company_id)
-                .where(Vehicle.category_id == optimization_group.vehicle_category_id)
-                .where(Vehicle.state == "actif")
-                .where(Vehicle.current_status == "disponible")
-            )
-            vehicles = session.exec(vehicle_stmt).all()
-            
-            # Convert to optimization format
-            trips_data = []
-            for trip in trips:
-                trips_data.append({
-                    "id": str(trip.id),
-                    "reference": trip.reference,
-                    "orig": trip.start_point,
-                    "dest": trip.end_point,
-                    "earliest": trip.earliest_start,
-                    "latest": trip.latest_start,
-                    "duration": trip.duration or self._calculate_duration(trip),
-                    "service": trip.service_time,
-                    "demand": trip.demand,
-                    "r_i0": trip.return_to_depot_time or self._calculate_return_time(trip),
-                    "company_id": str(trip.company_id)
-                })
-            
-            vehicles_data = []
-            for vehicle in vehicles:
-                vehicles_data.append({
-                    "id": vehicle.id,
-                    "depot": vehicle.depot_location,
-                    "capacity": vehicle.capacity,
-                    "available_from": 0,  # Could be customized per vehicle
-                    "available_to": 24 * 60,  # Full day
-                    "company_id": str(vehicle.company_id)
-                })
-            
-            return trips_data, vehicles_data
-    
-    def _calculate_duration(self, trip: Trip) -> int:
-        """
-        Calculate trip duration based on distance and average speed.
-        In production, this would use a routing service.
-        """
-        # Placeholder - in production, use actual routing
-        return 60  # Default 60 minutes
-    
-    def _calculate_return_time(self, trip: Trip) -> int:
-        """
-        Calculate return time to depot from destination.
-        """
-        # Placeholder - in production, use actual routing
-        return 30  # Default 30 minutes
-    
-    def _build_and_solve_cpsat_model(self, trips: List[Dict], vehicles: List[Dict], config: Dict) -> OptimizationResult:
-        """
-        Build and solve the CP-SAT model based on the provided data.
-        """
-        # Convert trips to dictionary format for easier access
-        trips_dict = {trip["id"]: trip for trip in trips}
-        vehicles_dict = {vehicle["id"]: vehicle for vehicle in vehicles}
-
-        trip_ids = list(trips_dict.keys())
-        vehicle_ids = list(vehicles_dict.keys())
-
-        if not trip_ids or not vehicle_ids:
-            return OptimizationResult(
-                job_id=str(uuid.uuid4()),
-                status=JobStatus.INFEASIBLE,
-                diagnostics=["No trips or vehicles available for optimization"]
-            )
-
-        # Preprocessing: calculate time windows and feasible edges
-        for trip_id, trip in trips_dict.items():
-            trip["earliest_int"] = int(trip["earliest"])
-            trip["latest_start_int"] = int(max(trip["earliest_int"], int(trip["latest"]) - int(trip["duration"])))
-
-        # Calculate feasible edges (compatible trip sequences)
-        feasible_edges = self._calculate_feasible_edges(trips_dict)
-
-        # Build CP-SAT model
-        model = cp_model.CpModel()
-
-        # Create variables
-        X, Y, IsLast, L, Start = self._create_variables(
-            model, trip_ids, vehicle_ids, feasible_edges, trips_dict
-        )
-
-        # Add constraints
-        self._add_constraints(
-            model, X, Y, IsLast, L, Start, 
-            trip_ids, vehicle_ids, feasible_edges, 
-            trips_dict, vehicles_dict
-        )
-
-        # Solve with lexicographic objectives
-        solution = self._solve_with_lexicographic_objectives(
-            model, X, Y, IsLast, L, Start,
-            trip_ids, vehicle_ids, feasible_edges,
-            trips_dict, vehicles_dict, config
-        )
-
-        return solution
-    
-    def _calculate_feasible_edges(self, trips_dict: Dict) -> List[Tuple[str, str]]:
-        """
-        Calculate feasible edges between trips based on location compatibility and time windows.
-        """
-        feasible_edges = []
-        
-        # In production, this would use actual routing and distance calculations
-        # For now, we'll use a simplified approach
-        for i, trip_i in trips_dict.items():
-            for j, trip_j in trips_dict.items():
-                if i == j:
-                    continue
                 
-                # Check if destination of i matches origin of j
-                # In production, this would use geocoding and proximity checks
-                if trip_i["dest"] == trip_j["orig"]:
-                    # Check time window feasibility
-                    earliest_finish_i = trip_i["earliest_int"] + trip_i["duration"] + trip_i["service"]
-                    travel_time = 15  # Default travel time between locations
-                    
-                    if earliest_finish_i + travel_time <= trip_j["latest_start_int"]:
-                        feasible_edges.append((i, j))
+                for j_idx in range(num_trips):
+                    if i_idx != j_idx:
+                        trip_j = self.trips[j_idx]
+                        travel_time = self._estimate_travel_time(trip_i, trip_j)
+                        
+                        # If chained: start_j >= end_i + travel_time
+                        self.model.Add(
+                            self.t_start[j_idx] >= self.t_end[i_idx] + travel_time
+                        ).OnlyEnforceIf(self.y[(v_idx, i_idx, j_idx)])
         
-        return feasible_edges
-    
-    def _create_variables(self, model, trip_ids, vehicle_ids, feasible_edges, trips_dict):
-        """
-        Create CP-SAT variables.
-        """
-        X = {}  # X[v,i] -> vehicle v does trip i
-        Y = {}  # Y[v,i,j] -> v sequences i->j
-        IsLast = {}  # IsLast[v,i] -> i is last trip of v
-        L = {}  # L[v] -> v makes a return trip
-        Start = {}  # Start[i] -> start time of trip i
-        
-        # Create variables
-        for v in vehicle_ids:
-            for i in trip_ids:
-                X[(v, i)] = model.NewBoolVar(f"X_{v}_{i}")
-                IsLast[(v, i)] = model.NewBoolVar(f"IsLast_{v}_{i}")
-            L[v] = model.NewBoolVar(f"L_{v}")
-        
-        for (i, j) in feasible_edges:
-            for v in vehicle_ids:
-                Y[(v, i, j)] = model.NewBoolVar(f"Y_{v}_{i}_{j}")
-        
-        for i in trip_ids:
-            lb = trips_dict[i]["earliest_int"]
-            ub = trips_dict[i]["latest_start_int"]
-            if ub < lb:
-                ub = lb  # Handle impossible time windows
-            Start[i] = model.NewIntVar(lb, ub, f"Start_{i}")
-        
-        return X, Y, IsLast, L, Start
-    
-    def _add_constraints(self, model, X, Y, IsLast, L, Start, 
-                        trip_ids, vehicle_ids, feasible_edges, 
-                        trips_dict, vehicles_dict):
-        """
-        Add all constraints to the CP-SAT model.
-        """
-        # C1: Each trip is assigned to exactly one vehicle
-        for i in trip_ids:
-            model.Add(sum(X[(v, i)] for v in vehicle_ids) == 1)
-        
-        # C2, C3: Y -> X consistency and sequencing constraints
-        for (i, j) in feasible_edges:
-            travel_time = 15  # Default travel time
-            for v in vehicle_ids:
-                model.AddImplication(Y[(v, i, j)], X[(v, i)])
-                model.AddImplication(Y[(v, i, j)], X[(v, j)])
-                # C8: Sequencing constraint
-                model.Add(Start[j] >= Start[i] + 
-                         trips_dict[i]["duration"] + 
-                         trips_dict[i]["service"] + 
-                         travel_time).OnlyEnforceIf(Y[(v, i, j)])
-        
-        # C4: IsLast and L variable relationships
-        for v in vehicle_ids:
-            for i in trip_ids:
-                # Find outgoing edges from i
-                outs = [Y[(v, a, b)] for (a, b) in feasible_edges if a == i]
-                if outs:
-                    model.Add(sum(outs) + IsLast[(v, i)] == X[(v, i)])
-                else:
-                    model.Add(IsLast[(v, i)] == X[(v, i)])
+        # CONSTRAINT 6: Return variable logic
+        for v_idx in range(num_vehicles):
+            trips_done = sum(self.x[(v_idx, i)] for i in range(num_trips))
+            chains_made = sum(self.y[(v_idx, i, j)] for i in range(num_trips) for j in range(num_trips) if i != j)
             
-            # L[v] is 1 if any IsLast[v,i] is 1
-            islasts = [IsLast[(v, i)] for i in trip_ids]
-            model.Add(sum(islasts) >= L[v])
-            model.Add(sum(islasts) <= len(trip_ids) * L[v])
+            # If trips_done > chains_made, then vehicle returns empty
+            self.model.Add(self.l[v_idx] >= trips_done - chains_made)
+            self.model.Add(self.l[v_idx] <= trips_done)
         
-        # C5: Capacity constraints
-        for v in vehicle_ids:
-            model.Add(sum(X[(v, i)] * trips_dict[i]["demand"] for i in trip_ids) <= 
-                     vehicles_dict[v]["capacity"])
-        
-        # C7: Time window constraints (already handled by Start variable bounds)
-        
-        # C8: Degree constraints (each trip has at most one incoming and one outgoing edge per vehicle)
-        for v in vehicle_ids:
-            for i in trip_ids:
-                outs = [Y[(v, a, b)] for (a, b) in feasible_edges if a == i]
-                ins = [Y[(v, a, b)] for (a, b) in feasible_edges if b == i]
-                if outs:
-                    model.Add(sum(outs) <= 1)
-                if ins:
-                    model.Add(sum(ins) <= 1)
-        
-        # C9: Return distance constraints (simplified)
-        for v in vehicle_ids:
-            # Conservative approach: sum of return distances <= sum of initial return allowances
-            return_dist_terms = []
-            for i in trip_ids:
-                # Simplified return distance calculation
-                return_dist = 20  # Default return distance
-                return_dist_terms.append(IsLast[(v, i)] * return_dist)
-            
-            if return_dist_terms:
-                return_dist_total = sum(return_dist_terms)
-                rhs = sum(X[(v, i)] * trips_dict[i]["r_i0"] for i in trip_ids)
-                model.Add(return_dist_total <= rhs)
+        # OBJECTIVE: Minimize empty returns
+        self.model.Minimize(sum(self.l[v] for v in range(num_vehicles)))
     
-    def _solve_with_lexicographic_objectives(self, model, X, Y, IsLast, L, Start,
-                                           trip_ids, vehicle_ids, feasible_edges,
-                                           trips_dict, vehicles_dict, config):
-        """
-        Solve with lexicographic objectives: first minimize vehicles used, then minimize return distances.
-        """
-        # First objective: minimize number of vehicles used (sum of L[v])
-        sumL = sum(L[v] for v in vehicle_ids)
-        model.Minimize(sumL)
-        
-        # Configure solver
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = config.get("timeout_seconds", 300)
-        solver.parameters.num_search_workers = config.get("num_workers", 8)
-        solver.parameters.log_search_progress = True
-        
-        # Solve first objective
-        status = solver.Solve(model)
-        
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return OptimizationResult(
-                job_id=uuid.uuid4(),
-                status=JobStatus.INFEASIBLE,
-                diagnostics=["No feasible solution found for primary objective"]
-            )
-        
-        bestL = int(solver.ObjectiveValue())
-        
-        # Second objective: minimize total return distance while keeping bestL
-        # For CP-SAT, we need to create a new model with the additional constraint
-        model2 = cp_model.CpModel()
-        
-        # Recreate variables and constraints (simplified approach)
-        # In production, you might want to use a more efficient approach
-        X2, Y2, IsLast2, L2, Start2 = self._create_variables(
-            model2, trip_ids, vehicle_ids, feasible_edges, trips_dict
+    def _are_points_compatible(self, trip_i: Trip, trip_j: Trip) -> bool:
+        """Check if arrival of trip_i matches departure of trip_j"""
+        arrival_lat = trip_i.arrival_lat
+        arrival_lng = trip_i.arrival_lng
+        departure_lat = trip_j.departure_lat
+        departure_lng = trip_j.departure_lng
+
+        if (
+            arrival_lat is None
+            or arrival_lng is None
+            or departure_lat is None
+            or departure_lng is None
+        ):
+            return False
+
+        # Allow 5km tolerance for matching
+        distance = haversine_distance(
+            arrival_lat,
+            arrival_lng,
+            departure_lat,
+            departure_lng
         )
-        
-        self._add_constraints(
-            model2, X2, Y2, IsLast2, L2, Start2,
-            trip_ids, vehicle_ids, feasible_edges,
-            trips_dict, vehicles_dict
-        )
-        
-        # Add constraint to maintain the first objective value
-        model2.Add(sum(L2[v] for v in vehicle_ids) <= bestL)
-        
-        # Second objective: minimize total return distance
-        total_return_dist = 0
-        for v in vehicle_ids:
-            for i in trip_ids:
-                return_dist = 20  # Default return distance
-                total_return_dist += IsLast2[(v, i)] * return_dist
-        
-        model2.Minimize(total_return_dist)
-        
-        # Solve second objective
-        solver2 = cp_model.CpSolver()
-        solver2.parameters.max_time_in_seconds = config.get("timeout_seconds", 300) - solver.WallTime()
-        solver2.parameters.num_search_workers = config.get("num_workers", 8)
-        
-        status2 = solver2.Solve(model2)
-        
-        if status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            # Use first solution if second fails
-            return self._extract_solution(
-                solver, X, Y, IsLast, Start,
-                trip_ids, vehicle_ids, feasible_edges,
-                trips_dict, vehicles_dict, bestL, config
-            )
-        else:
-            return self._extract_solution(
-                solver2, X2, Y2, IsLast2, Start2,
-                trip_ids, vehicle_ids, feasible_edges,
-                trips_dict, vehicles_dict, bestL, config
-            )
+        return distance < 5.0
     
-    def _extract_solution(self, solver, X, Y, IsLast, Start,
-                         trip_ids, vehicle_ids, feasible_edges,
-                         trips_dict, vehicles_dict, vehicles_used, config):
+    def _estimate_duration(self, trip: Trip) -> int:
+        """Estimate trip duration in minutes"""
+        if trip.duration_minutes:
+            return trip.duration_minutes
+        
+        # Rough estimate: 1 hour per 60km
+        distance = calculate_trip_distance(trip)
+        return int((distance / 60) * 60) if distance > 0 else 60
+    
+    def _estimate_travel_time(self, trip_i: Trip, trip_j: Trip) -> int:
+        """Estimate travel time from arrival of i to departure of j"""
+        arrival_lat = trip_i.arrival_lat
+        arrival_lng = trip_i.arrival_lng
+        departure_lat = trip_j.departure_lat
+        departure_lng = trip_j.departure_lng
+
+        if (
+            arrival_lat is None
+            or arrival_lng is None
+            or departure_lat is None
+            or departure_lng is None
+        ):
+            return 30  # Default 30 min
+
+        distance = haversine_distance(
+            arrival_lat,
+            arrival_lng,
+            departure_lat,
+            departure_lng
+        )
+        return int((distance / 60) * 60) + 15  # Include 15 min service time
+    
+    def solve(self, time_limit_seconds: int = 300) -> dict:
         """
-        Extract solution from solver and format as OptimizationResult.
+        Solve the optimization problem
+        Returns: {
+            'status': str,
+            'objective_value': int,
+            'assignments': list of (vehicle_idx, trip_idx),
+            'chains': list of (vehicle_idx, trip_i_idx, trip_j_idx),
+            'solve_time': float
+        }
         """
-        if solver.Status() not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return OptimizationResult(
-                job_id=uuid.uuid4(),
-                status=JobStatus.INFEASIBLE,
-                diagnostics=["No feasible solution could be extracted"]
-            )
+        self.solver.parameters.max_time_in_seconds = time_limit_seconds
         
-        # Extract assignments
-        assignments = []
-        vehicle_chains = defaultdict(list)
+        status = self.solver.Solve(self.model)
         
-        for v in vehicle_ids:
-            # Find trips assigned to this vehicle
-            assigned_trips = []
-            for i in trip_ids:
-                if solver.Value(X[(v, i)]) == 1:
-                    assigned_trips.append(i)
-            
-            if not assigned_trips:
-                continue
-            
-            # Build chains using Y variables
-            next_map = {}
-            for (i, j) in feasible_edges:
-                if solver.Value(Y[(v, i, j)]) == 1:
-                    next_map[i] = j
-            
-            # Find chain starts (trips with no incoming edge)
-            starts = [i for i in assigned_trips if i not in next_map.values()]
-            
-            chains = []
-            for start in starts:
-                chain = [start]
-                current = start
-                while current in next_map:
-                    current = next_map[current]
-                    chain.append(current)
-                chains.append(chain)
-            
-            # Convert chains to assignment format
-            for chain in chains:
-                trip_sequence = []
-                start_times = []
-                end_times = []
-                is_last_flags = []
-                
-                for i in chain:
-                    trip_sequence.append(i)
-                    start_time = solver.Value(Start[i])
-                    start_times.append(start_time)
-                    end_times.append(start_time + trips_dict[i]["duration"])
-                    is_last = solver.Value(IsLast[(v, i)]) == 1
-                    is_last_flags.append(is_last)
-                
-                assignment = AssignmentResult(
-                    vehicle_id=v,
-                    trip_sequence=trip_sequence,
-                    start_times=start_times,
-                    end_times=end_times,
-                    is_last=is_last_flags
-                )
-                assignments.append(assignment)
-        
-        # Calculate metrics
-        total_return_distance = 0
-        for v in vehicle_ids:
-            for i in trip_ids:
-                if solver.Value(IsLast[(v, i)]) == 1:
-                    total_return_distance += 20  # Simplified
-        
-        metrics = {
-            "solve_time_s": solver.WallTime(),
-            "num_assignments": len(assignments),
-            "num_vehicles_used": vehicles_used,
-            "total_return_distance": total_return_distance,
-            "solver_status": solver.StatusName()
+        result = {
+            'status': self._get_status_name(status),
+            'objective_value': self.solver.ObjectiveValue() if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
+            'assignments': [],
+            'chains': [],
+            'returns': [],
+            'solve_time': self.solver.WallTime()
         }
         
-        return OptimizationResult(
-            job_id=uuid.uuid4(),  # Will be replaced by actual job ID
-            status=JobStatus.COMPLETED,
-            objective=float(vehicles_used),  # Primary objective value
-            metrics=metrics,
-            assignments=assignments,
-            diagnostics=[]
+        if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            # Extract assignments
+            for (v_idx, i_idx), var in self.x.items():
+                if self.solver.Value(var) == 1:
+                    result['assignments'].append((v_idx, i_idx))
+            
+            # Extract chains
+            for (v_idx, i_idx, j_idx), var in self.y.items():
+                if self.solver.Value(var) == 1:
+                    result['chains'].append((v_idx, i_idx, j_idx))
+            
+            # Extract returns
+            for v_idx, var in self.l.items():
+                if self.solver.Value(var) == 1:
+                    result['returns'].append(v_idx)
+        
+        return result
+    
+    def _get_status_name(self, status: int) -> str:
+        """Convert status code to readable name"""
+        status_map = {
+            cp_model.OPTIMAL: 'OPTIMAL',
+            cp_model.FEASIBLE: 'FEASIBLE',
+            cp_model.INFEASIBLE: 'INFEASIBLE',
+            cp_model.MODEL_INVALID: 'MODEL_INVALID',
+            cp_model.UNKNOWN: 'UNKNOWN'
+        }
+        return status_map.get(status, 'UNKNOWN')
+
+# ============= SERVICE FUNCTIONS =============
+def optimize_trips_for_date(
+    *,
+    session: Session,
+    target_date: datetime
+) -> dict:
+    """
+    Main optimization service: orchestrates trip grouping and solving
+    
+    Request Lifecycle:
+    1. Fetch all planned trips for the date
+    2. Group trips by vehicle category compatibility
+    3. For each group, fetch available vehicles
+    4. Run CP-SAT solver
+    5. Update trips with optimization results
+    6. Return metrics
+    """
+    # Step 1: Fetch trips
+    trips = get_trips_for_date(session=session, target_date=target_date)
+    
+    if not trips:
+        return {'status': 'NO_TRIPS', 'message': 'No trips found for the date'}
+    
+    # Create optimization batch
+    batch = create_optimization_batch(session=session, batch_date=target_date)
+    
+    # Step 2: Group by category
+    trip_groups = group_trips_by_compatibility(trips)
+    
+    total_km_saved = 0.0
+    all_results = []
+    
+    # Step 3 & 4: Solve each group
+    for vehicle_category, group_trips in trip_groups.items():
+        vehicles = get_available_vehicles_by_category(
+            session=session,
+            category=vehicle_category,
+            date=target_date
         )
+        
+        if not vehicles:
+            continue
+        
+        # Run solver
+        solver = TripOptimizationSolver(trips=group_trips, vehicles=vehicles)
+        solver.build_model()
+        result = solver.solve(time_limit_seconds=300)
+        
+        all_results.append(result)
+        
+        # Step 5: Update trips with results
+        if result['status'] in ['OPTIMAL', 'FEASIBLE']:
+            _apply_optimization_results(
+                session=session,
+                trips=group_trips,
+                vehicles=vehicles,
+                result=result,
+                batch_id=batch.id
+            )
+            
+            # Calculate savings
+            km_saved = _calculate_km_saved(group_trips, result)
+            total_km_saved += km_saved
+    
+    # Step 6: Update batch and return
+    fuel_saved = total_km_saved * 0.3  # Assume 0.3L per km
+    
+    update_optimization_batch(
+        session=session,
+        batch_id=batch.id,
+        status='completed',
+        total_trips=len(trips),
+        km_saved=total_km_saved,
+        fuel_saved_liters=fuel_saved,
+        vehicles_used=len(set(v for v, _ in all_results[0]['assignments'])) if all_results else 0,
+        completed_at=datetime.utcnow()
+    )
+    
+    return {
+        'status': 'SUCCESS',
+        'batch_id': str(batch.id),
+        'total_trips': len(trips),
+        'km_saved': total_km_saved,
+        'fuel_saved_liters': fuel_saved,
+        'results': all_results
+    }
+
+def _apply_optimization_results(
+    session: Session,
+    trips: list[Trip],
+    vehicles: list[Vehicle],
+    result: dict,
+    batch_id: uuid.UUID
+):
+    """Apply solver results to database"""
+    for v_idx, i_idx in result['assignments']:
+        trip = trips[i_idx]
+        vehicle = vehicles[v_idx]
+        
+        trip.optimization_batch_id = batch_id
+        trip.assigned_vehicle_id = vehicle.id
+        session.add(trip)
+    
+    # Mark last trips in chains
+    chained_trips = set()
+    for v_idx, i_idx, j_idx in result['chains']:
+        chained_trips.add(i_idx)
+    
+    for v_idx, i_idx in result['assignments']:
+        if i_idx not in chained_trips:
+            trips[i_idx].is_last_in_chain = True
+    
+    session.commit()
+
+def _calculate_km_saved(trips: list[Trip], result: dict) -> float:
+    """Calculate total km saved by chaining"""
+    # Initial return distances
+    initial_return_km = sum(trip.return_distance_km or 0 for trip in trips)
+    
+    # After optimization: only vehicles that return
+    optimized_returns = len(result['returns'])
+    avg_return_km = initial_return_km / len(trips) if trips else 0
+    optimized_return_km = optimized_returns * avg_return_km
+    
+    return max(0, initial_return_km - optimized_return_km)

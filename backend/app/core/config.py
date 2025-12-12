@@ -44,9 +44,20 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def all_cors_origins(self) -> list[str]:
-        return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS] + [
-            self.FRONTEND_HOST
-        ]
+        origins = [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS]
+        frontend_origin = self.FRONTEND_HOST.rstrip("/")
+        extra_origins = [frontend_origin, "http://localhost:5174"]
+
+        for origin in extra_origins:
+            if origin and origin not in origins:
+                origins.append(origin)
+
+        # preserve insertion order while deduplicating
+        seen: list[str] = []
+        for origin in origins:
+            if origin not in seen:
+                seen.append(origin)
+        return seen
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None

@@ -1,8 +1,8 @@
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, date as date_type, time
+from typing import Any, Optional, cast
 import uuid
 
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, select, and_, func
 
 from app.core.security import get_password_hash, verify_password
 from app.models.company_models import (
@@ -199,13 +199,21 @@ def get_trips_by_company(
     company_id: uuid.UUID, 
     skip: int = 0, 
     limit: int = 100,
-    status: Optional[TripStatus] = None
+    status: Optional[TripStatus] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ) -> tuple[list[Trip], int]:
     """Get all trips for a company with optional status filter"""
     base_query = select(Trip).where(Trip.company_id == company_id)
     
     if status:
         base_query = base_query.where(Trip.status == status)
+
+    if start_date is not None:
+        base_query = base_query.where(Trip.departure_datetime >= start_date)
+
+    if end_date is not None:
+        base_query = base_query.where(Trip.departure_datetime <= end_date)
     
     statement = base_query.offset(skip).limit(limit)
     trips = session.exec(statement).all()
@@ -256,6 +264,95 @@ def get_trips_for_date(
             Trip.departure_datetime <= end_of_day,
             Trip.status == TripStatus.PLANNED
         )
+    )
+    return list(session.exec(statement).all())
+
+
+def get_trips_for_date_and_company(
+    *,
+    session: Session,
+    target_date: datetime,
+    company_id: uuid.UUID,
+    status: Optional[TripStatus] = None,
+    include_optimized: bool = True,
+) -> list[Trip]:
+    """Get trips for a specific date and company.
+
+    If include_optimized is False, excludes trips already assigned by optimization.
+    """
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    statement = select(Trip).where(
+        and_(
+            Trip.company_id == company_id,
+            Trip.departure_datetime >= start_of_day,
+            Trip.departure_datetime <= end_of_day,
+        )
+    )
+
+    if status is not None:
+        statement = statement.where(Trip.status == status)
+
+    if not include_optimized:
+        optimization_batch_id_col = cast(Any, Trip.optimization_batch_id)
+        assigned_vehicle_id_col = cast(Any, Trip.assigned_vehicle_id)
+        statement = statement.where(
+            and_(
+                optimization_batch_id_col.is_(None),
+                assigned_vehicle_id_col.is_(None),
+            )
+        )
+
+    return list(session.exec(statement).all())
+
+
+def get_trip_count_by_date(
+    *,
+    session: Session,
+    company_id: uuid.UUID,
+    target_date: date_type,
+) -> int:
+    """Count trips for a company for the given calendar date."""
+    start_of_day = datetime.combine(target_date, time.min)
+    end_of_day = datetime.combine(target_date, time.max)
+
+    statement = (
+        select(func.count())
+        .select_from(Trip)
+        .where(
+            and_(
+                Trip.company_id == company_id,
+                Trip.departure_datetime >= start_of_day,
+                Trip.departure_datetime <= end_of_day,
+            )
+        )
+    )
+    return int(session.exec(statement).one())
+
+
+def get_optimized_trips_for_date(
+    *,
+    session: Session,
+    company_id: uuid.UUID,
+    target_date: datetime,
+) -> list[Trip]:
+    """Get trips for a date that have been assigned by optimization."""
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    assigned_vehicle_id_col = cast(Any, Trip.assigned_vehicle_id)
+    statement = (
+        select(Trip)
+        .where(
+            and_(
+                Trip.company_id == company_id,
+                Trip.departure_datetime >= start_of_day,
+                Trip.departure_datetime <= end_of_day,
+                assigned_vehicle_id_col.is_not(None),
+            )
+        )
+        .order_by(assigned_vehicle_id_col, cast(Any, Trip.sequence_order))
     )
     return list(session.exec(statement).all())
 

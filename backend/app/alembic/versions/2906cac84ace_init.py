@@ -1,18 +1,18 @@
-"""latestmodels
+"""init
 
-Revision ID: 99155814dc3b
-Revises: 9abc986a7805
-Create Date: 2025-12-10 03:01:41.101672
+Revision ID: 2906cac84ace
+Revises: 
+Create Date: 2025-12-14 19:21:22.405956
 
 """
 from alembic import op
 import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
-
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '99155814dc3b'
-down_revision = '9abc986a7805'
+revision = '2906cac84ace'
+down_revision = None
 branch_labels = None
 depends_on = None
 
@@ -31,6 +31,13 @@ def upgrade():
     sa.Column('completed_at', sa.DateTime(), nullable=True),
     sa.Column('solver_time_seconds', sa.Float(), nullable=True),
     sa.Column('solver_status', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('optimization_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('participating_companies', postgresql.JSON(astext_type=sa.Text()), nullable=True),
+    sa.Column('total_companies', sa.Integer(), nullable=False),
+    sa.Column('total_vehicles_shared', sa.Integer(), nullable=False),
+    sa.Column('total_km_saved', sa.Float(), nullable=False),
+    sa.Column('total_fuel_saved', sa.Float(), nullable=False),
+    sa.Column('company_results', postgresql.JSON(astext_type=sa.Text()), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_optimization_batches_batch_date'), 'optimization_batches', ['batch_date'], unique=False)
@@ -58,6 +65,9 @@ def upgrade():
     sa.Column('logo_url', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('is_verified', sa.Boolean(), nullable=False),
+    sa.Column('depot_lat', sa.Float(), nullable=True),
+    sa.Column('depot_lng', sa.Float(), nullable=True),
+    sa.Column('depot_address', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -68,6 +78,39 @@ def upgrade():
     op.create_index(op.f('ix_companies_company_name'), 'companies', ['company_name'], unique=False)
     op.create_index(op.f('ix_companies_nif'), 'companies', ['nif'], unique=True)
     op.create_index(op.f('ix_companies_nis'), 'companies', ['nis'], unique=True)
+    op.create_table('company_optimization_results',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('optimization_batch_id', sa.Uuid(), nullable=False),
+    sa.Column('company_id', sa.Uuid(), nullable=False),
+    sa.Column('trips_contributed', sa.Integer(), nullable=False),
+    sa.Column('trips_assigned', sa.Integer(), nullable=False),
+    sa.Column('vehicles_used', sa.Integer(), nullable=False),
+    sa.Column('vehicles_shared_out', sa.Integer(), nullable=False),
+    sa.Column('vehicles_borrowed', sa.Integer(), nullable=False),
+    sa.Column('km_saved', sa.Float(), nullable=False),
+    sa.Column('fuel_saved_liters', sa.Float(), nullable=False),
+    sa.Column('co2_saved_kg', sa.Float(), nullable=False),
+    sa.Column('cost_saved_usd', sa.Float(), nullable=False),
+    sa.Column('chains_participated', sa.Integer(), nullable=False),
+    sa.Column('average_chain_length', sa.Float(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ),
+    sa.ForeignKeyConstraint(['optimization_batch_id'], ['optimization_batches.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('map_markers',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('company_id', sa.Uuid(), nullable=False),
+    sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
+    sa.Column('lat', sa.Float(), nullable=False),
+    sa.Column('lng', sa.Float(), nullable=False),
+    sa.Column('marker_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('address', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('vehicles',
     sa.Column('license_plate', sqlmodel.sql.sqltypes.AutoString(length=20), nullable=False),
     sa.Column('category', sa.Enum('AG1', 'AG2', 'AG3', 'AG4', 'AG5', 'AG6', 'BT1', 'BT2', 'BT3', 'BT4', 'BT5', 'BT6', 'IN1', 'IN2', 'IN3', 'IN4', 'IN5', 'IN6', 'CH1', 'CH2', 'CH3', 'CH4', 'CH5', name='vehiclecategory'), nullable=False),
@@ -82,6 +125,10 @@ def upgrade():
     sa.Column('brand', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
     sa.Column('model', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
     sa.Column('fuel_type', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
+    sa.Column('cost_per_km', sa.Float(), nullable=True),
+    sa.Column('fuel_consumption_l_per_100km', sa.Float(), nullable=True),
+    sa.Column('depot_lat', sa.Float(), nullable=True),
+    sa.Column('depot_lng', sa.Float(), nullable=True),
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -109,6 +156,25 @@ def upgrade():
     sa.Column('duration_minutes', sa.Integer(), nullable=True),
     sa.Column('return_distance_km', sa.Float(), nullable=True),
     sa.Column('notes', sqlmodel.sql.sqltypes.AutoString(length=1000), nullable=True),
+    sa.Column('route_polyline', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('route_distance_km', sa.Float(), nullable=True),
+    sa.Column('route_duration_min', sa.Integer(), nullable=True),
+    sa.Column('estimated_arrival_datetime', sa.DateTime(), nullable=True),
+    sa.Column('return_route_polyline', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('return_duration_min', sa.Integer(), nullable=True),
+    sa.Column('loading_window_start', sa.DateTime(), nullable=True),
+    sa.Column('loading_window_end', sa.DateTime(), nullable=True),
+    sa.Column('delivery_window_start', sa.DateTime(), nullable=True),
+    sa.Column('delivery_window_end', sa.DateTime(), nullable=True),
+    sa.Column('hazardous_material', sa.Boolean(), nullable=False),
+    sa.Column('temperature_requirement_celsius', sa.Float(), nullable=True),
+    sa.Column('trip_priority', sa.Integer(), nullable=False),
+    sa.Column('trip_date', sa.DateTime(), nullable=True),
+    sa.Column('uploaded_at', sa.DateTime(), nullable=True),
+    sa.Column('route_calculated', sa.Boolean(), nullable=False),
+    sa.Column('optimization_status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('created_from_map', sa.Boolean(), nullable=False),
+    sa.Column('map_session_id', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -132,6 +198,8 @@ def downgrade():
     op.drop_table('trips')
     op.drop_index(op.f('ix_vehicles_license_plate'), table_name='vehicles')
     op.drop_table('vehicles')
+    op.drop_table('map_markers')
+    op.drop_table('company_optimization_results')
     op.drop_index(op.f('ix_companies_nis'), table_name='companies')
     op.drop_index(op.f('ix_companies_nif'), table_name='companies')
     op.drop_index(op.f('ix_companies_company_name'), table_name='companies')

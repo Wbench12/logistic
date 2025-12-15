@@ -5,667 +5,509 @@ import {
   CardBody,
   CardRoot,
   Container,
-  chakra,
   Flex,
   Heading,
-  HStack,
   Icon,
+  IconButton,
   Input,
+  SimpleGrid,
   Stack,
-  type StackProps,
+  Table,
   Text,
-  Textarea,
-  VStack,
-} from "@chakra-ui/react"
-import { type ReactNode, useMemo, useState } from "react"
-import { FiBriefcase, FiCheckCircle, FiMapPin, FiUser } from "react-icons/fi"
-import type {
-  ActivitySector,
-  CompanyCreate,
-  CompanyType,
-  PartnerType,
-} from "@/client"
-import { toaster } from "@/components/ui/toaster"
-import { getErrorMessage } from "@/utils"
+} from "@chakra-ui/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import {
+  FiCalendar,
+  FiCheckCircle,
+  FiClock,
+  FiEdit2,
+  FiMoreVertical,
+  FiPlus,
+  FiTrash2,
+  FiZap,
+} from "react-icons/fi";
 
-type CompanyRegistrationFormState = {
-  company_name: string
-  nis: string
-  nif: string
-  headquarters_address: string
-  company_type: CompanyType
-  activity_sector: ActivitySector
-  sector_specification: string
-  partner_type: PartnerType
-  legal_representative_name: string
-  legal_representative_contact: string
-}
+import {
+  type ApiError,
+  type TripCreate,
+  type TripPublic,
+  type TripUpdate,
+  TripsService,
+} from "@/client";
+import {
+  DialogActionTrigger,
+  DialogBody,
+  DialogCloseTrigger,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogRoot,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from "@/components/ui/menu";
+import { SkeletonText } from "@/components/ui/skeleton";
+import { Toaster, toaster } from "@/components/ui/toaster";
+import { handleError } from "@/utils";
 
-type ValidationErrors = Partial<
-  Record<keyof CompanyRegistrationFormState, string>
->
+// --- Configuration ---
+const statusConfig = {
+  planifie: { label: "Planifié", color: "purple" },
+  en_cours: { label: "En Cours", color: "blue" },
+  termine: { label: "Terminé", color: "green" },
+  annule: { label: "Annulé", color: "red" },
+};
 
-interface CompanyRegistrationFormProps {
-  onSubmit: (payload: CompanyCreate) => Promise<void>
-  isSubmitting?: boolean
-  showSuccessToast?: boolean
-}
+const cargoCategories = {
+  a01_produits_frais: "Produits Frais",
+  b01_materiaux_vrac: "Matériaux Vrac",
+  i01_produits_finis: "Produits Finis",
+  // Add other categories as needed based on API types
+};
 
-const INITIAL_STATE: CompanyRegistrationFormState = {
-  company_name: "",
-  nis: "",
-  nif: "",
-  headquarters_address: "",
-  company_type: "production",
-  activity_sector: "agroalimentaire",
-  sector_specification: "",
-  partner_type: "entreprise",
-  legal_representative_name: "",
-  legal_representative_contact: "",
-}
+const TripManagementPage = () => {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTrip, setEditingTrip] = useState<TripPublic | null>(null);
 
-const COMPANY_TYPES: Record<CompanyType, string> = {
-  production: "Production",
-  negoce: "Négoce",
-  service: "Service",
-}
+  // --- API ---
+  const { data, isLoading } = useQuery({
+    queryKey: ["trips"],
+    queryFn: () => TripsService.readTrips({ limit: 100 }),
+  });
 
-const ACTIVITY_SECTORS: Record<ActivitySector, string> = {
-  agroalimentaire: "Agroalimentaire",
-  construction_btp: "Construction et BTP",
-  industriel_manufacturier: "Industriel et Manufacturier",
-  chimique_petrochimique: "Chimique et Pétrochimique",
-  agricole_rural: "Agricole et Rural",
-  logistique_messagerie: "Logistique et Messagerie",
-  medical_parapharmaceutique: "Médical et Parapharmaceutique",
-  hygiene_dechets_environnement: "Hygiène, Déchets et Environnement",
-  energie_ressources_naturelles: "Énergie et Ressources Naturelles",
-  logistique_speciale: "Logistique Spéciale",
-  autre: "Autre",
-}
+  // Optimize Mutation
+  const optimizeMutation = useMutation({
+    mutationFn: () =>
+      TripsService.optimizeTrips({
+        date: new Date().toISOString().split("T")[0],
+      }),
+    onSuccess: () => {
+      toaster.success({
+        title: "Optimisation lancée",
+        description: "L'algorithme calcule les meilleurs itinéraires...",
+      });
+    },
+    onError: (err: ApiError) => handleError(err),
+  });
 
-const StyledSelect = chakra("select")
+  const createMutation = useMutation({
+    mutationFn: (data: TripCreate) =>
+      TripsService.createTrip({ requestBody: data }),
+    onSuccess: () => {
+      toaster.success({ title: "Trajet créé" });
+      closeModal();
+    },
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["trips"] }),
+  });
 
-type FieldGroupProps = {
-  label: string
-  helper?: string
-  required?: boolean
-  children: ReactNode
-} & StackProps
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: TripUpdate }) =>
+      TripsService.updateTrip({ tripId: id, requestBody: data }),
+    onSuccess: () => {
+      toaster.success({ title: "Trajet mis à jour" });
+      closeModal();
+    },
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["trips"] }),
+  });
 
-const FieldGroup = ({
-  label,
-  helper,
-  required,
-  children,
-  ...stackProps
-}: FieldGroupProps) => (
-  <Stack gap={1} {...stackProps}>
-    <chakra.label fontSize="sm" fontWeight="semibold">
-      {label}
-      {required && (
-        <Text as="span" color="red.500" ml={1}>
-          *
-        </Text>
-      )}
-    </chakra.label>
-    {children}
-    {helper && (
-      <Text fontSize="sm" color="gray.500">
-        {helper}
-      </Text>
-    )}
-  </Stack>
-)
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => TripsService.deleteTrip({ tripId: id }),
+    onSuccess: () => toaster.success({ title: "Trajet supprimé" }),
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["trips"] }),
+  });
 
-const SELECT_BASE_PROPS = {
-  borderWidth: "1px",
-  borderColor: "gray.200",
-  borderRadius: "md",
-  bg: "white",
-  px: 3,
-  py: 2,
-  _focusVisible: {
-    outline: "2px solid",
-    outlineColor: "purple.500",
-  },
-}
+  // --- Form ---
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<TripCreate>();
 
-const CompanyRegistrationForm = ({
-  onSubmit,
-  isSubmitting = false,
-  showSuccessToast = true,
-}: CompanyRegistrationFormProps) => {
-  const [step, setStep] = useState(1)
-  const [formData, setFormData] =
-    useState<CompanyRegistrationFormState>(INITIAL_STATE)
-  const [errors, setErrors] = useState<ValidationErrors>({})
-
-  const progressPercent = useMemo(() => (step / 3) * 100, [step])
-
-  const updateField = <Key extends keyof CompanyRegistrationFormState>(
-    key: Key,
-    value: CompanyRegistrationFormState[Key],
-  ) => {
-    // Clear error for this field when user starts typing
-    setErrors((prev) => {
-      const newErrors = { ...prev }
-      delete newErrors[key]
-      return newErrors
-    })
-
-    setFormData((prev) => ({
-      ...prev,
-      [key]: value,
-    }))
-  }
-
-  const validateStep1 = (): boolean => {
-    const newErrors: ValidationErrors = {}
-
-    // Company name validation
-    if (!formData.company_name.trim()) {
-      newErrors.company_name = "Veuillez saisir le nom de votre entreprise"
-    } else if (formData.company_name.trim().length < 3) {
-      newErrors.company_name = "Le nom doit contenir au moins 3 caractères"
-    }
-
-    // NIS validation
-    if (!formData.nis.trim()) {
-      newErrors.nis = "Le numéro NIS est obligatoire"
-    } else if (!/^\d+$/.test(formData.nis)) {
-      newErrors.nis = "Le NIS doit contenir uniquement des chiffres"
-    } else if (formData.nis.length > 15) {
-      newErrors.nis = "Le NIS ne peut pas dépasser 15 chiffres"
-    }
-
-    // NIF validation
-    if (!formData.nif.trim()) {
-      newErrors.nif = "Le numéro NIF est obligatoire"
-    } else if (!/^\d+$/.test(formData.nif)) {
-      newErrors.nif = "Le NIF doit contenir uniquement des chiffres"
-    } else if (formData.nif.length < 15) {
-      newErrors.nif = "Le NIF doit contenir au moins 15 chiffres"
-    } else if (formData.nif.length > 20) {
-      newErrors.nif = "Le NIF ne peut pas dépasser 20 chiffres"
-    }
-
-    // Address validation
-    if (!formData.headquarters_address.trim()) {
-      newErrors.headquarters_address =
-        "Veuillez saisir l'adresse du siège social"
-    } else if (formData.headquarters_address.trim().length < 10) {
-      newErrors.headquarters_address =
-        "L'adresse doit contenir au moins 10 caractères"
-    }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const validateStep3 = (): boolean => {
-    const newErrors: ValidationErrors = {}
-
-    // Legal representative name validation
-    if (!formData.legal_representative_name.trim()) {
-      newErrors.legal_representative_name =
-        "Veuillez saisir le nom du représentant légal"
-    } else if (formData.legal_representative_name.trim().length < 3) {
-      newErrors.legal_representative_name =
-        "Le nom doit contenir au moins 3 caractères"
-    } else if (!/^[a-zA-ZÀ-ÿ\s'-]+$/.test(formData.legal_representative_name)) {
-      newErrors.legal_representative_name =
-        "Le nom ne doit contenir que des lettres"
-    }
-
-    // Phone validation
-    if (!formData.legal_representative_contact.trim()) {
-      newErrors.legal_representative_contact =
-        "Veuillez saisir le numéro de téléphone"
+  const openModal = (trip?: TripPublic) => {
+    if (trip) {
+      setEditingTrip(trip);
+      reset(trip as any); // Type casting for ease, in real app map fields properly
     } else {
-      const cleaned = formData.legal_representative_contact.replace(
-        /[\s-]/g,
-        "",
-      )
-      if (!cleaned.startsWith("+213") && !cleaned.startsWith("0")) {
-        newErrors.legal_representative_contact =
-          "Le numéro doit commencer par +213 ou 0"
-      } else if (cleaned.startsWith("+213") && cleaned.length !== 13) {
-        newErrors.legal_representative_contact =
-          "Format attendu: +213 suivi de 9 chiffres"
-      } else if (cleaned.startsWith("0") && cleaned.length !== 10) {
-        newErrors.legal_representative_contact =
-          "Format attendu: 0 suivi de 9 chiffres"
-      } else if (!/^\+?\d+$/.test(cleaned)) {
-        newErrors.legal_representative_contact =
-          "Le numéro doit contenir uniquement des chiffres"
-      }
+      setEditingTrip(null);
+      reset({
+        status: "planifie",
+        cargo_category: "a01_produits_frais",
+        material_type: "solide",
+      });
+    }
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setEditingTrip(null);
+    reset();
+  };
+
+  const onSubmit = (data: TripCreate) => {
+    const payload: any = {
+      ...data,
+      cargo_weight_kg: Number((data as any).cargo_weight_kg),
+    };
+    if (!payload.vehicle_id) {
+      payload.vehicle_id = null;
     }
 
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-  const nextStep = () => {
-    if (step === 1 && !validateStep1()) {
-      return
+    if (editingTrip) {
+      updateMutation.mutate({
+        id: editingTrip.id,
+        data: payload as TripUpdate,
+      });
+    } else {
+      createMutation.mutate(payload);
     }
-    setStep((current) => Math.min(current + 1, 3))
-  }
-  const prevStep = () => setStep((current) => Math.max(current - 1, 1))
+  };
 
-  const handleSubmit = async () => {
-    // Validate step 3 before submitting
-    if (!validateStep3()) {
-      return
-    }
-
-    const payload: CompanyCreate = {
-      ...formData,
-      sector_specification: formData.sector_specification || undefined,
-    }
-
-    try {
-      await onSubmit(payload)
-
-      if (showSuccessToast) {
-        toaster.success({
-          title: "Entreprise créée avec succès!",
-          description: "Votre profil d'entreprise a été enregistré.",
-          meta: { closable: true, color: "green.solid" },
-        })
-      }
-    } catch (error: any) {
-      // Extract error message from backend
-      const errorMessage = getErrorMessage(error)
-
-      // Check for common business logic errors
-      let title = "Erreur"
-      let description = errorMessage
-
-      if (
-        errorMessage.toLowerCase().includes("nis") &&
-        errorMessage.toLowerCase().includes("exist")
-      ) {
-        title = "NIS déjà utilisé"
-        description =
-          "Ce numéro NIS est déjà enregistré dans notre système. Veuillez vérifier votre saisie."
-      } else if (
-        errorMessage.toLowerCase().includes("nif") &&
-        errorMessage.toLowerCase().includes("exist")
-      ) {
-        title = "NIF déjà utilisé"
-        description =
-          "Ce numéro NIF est déjà enregistré dans notre système. Veuillez vérifier votre saisie."
-      } else if (
-        errorMessage.toLowerCase().includes("company") &&
-        errorMessage.toLowerCase().includes("exist")
-      ) {
-        title = "Entreprise déjà enregistrée"
-        description = "Vous avez déjà un profil d'entreprise enregistré."
-      } else if (errorMessage.toLowerCase().includes("credential")) {
-        title = "Session expirée"
-        description = "Votre session a expiré. Veuillez vous reconnecter."
-      }
-
-      toaster.error({
-        title,
-        description,
-        meta: { closable: true, color: "red.solid" },
-      })
-    }
-  }
-
-  const isStepThreeValid =
-    formData.legal_representative_name.trim().length >= 3 &&
-    /^[a-zA-ZÀ-ÿ\s'-]+$/.test(formData.legal_representative_name) &&
-    formData.legal_representative_contact.trim().length > 0
-
-  const isNextDisabled = false // Allow clicking next, validation happens on nextStep()
+  const trips = data?.data || [];
+  const stats = {
+    total: trips.length,
+    planned: trips.filter((t) => t.status === "planifie").length,
+    active: trips.filter((t) => t.status === "en_cours").length,
+  };
 
   return (
-    <Container maxW="4xl" py={8}>
-      <Box textAlign="center" mb={8}>
-        <Heading
-          size="2xl"
-          mb={2}
-          bgGradient="linear(to-r, teal.400, blue.500)"
-          bgClip="text"
-        >
-          Inscription Entreprise
-        </Heading>
-        <Text color="gray.600" fontSize="lg">
-          Créez votre profil pour accéder à la plateforme
-        </Text>
-      </Box>
-
-      <CardRoot variant="elevated" borderRadius="xl" mb={6}>
-        <CardBody>
-          <Flex alignItems="center" mb={4}>
-            <Text fontSize="sm" fontWeight="medium" color="gray.600">
-              Étape {step} sur 3
-            </Text>
-            <Badge ml="auto" colorScheme="teal" px={3} py={1}>
-              {progressPercent.toFixed(0)}% complété
-            </Badge>
-          </Flex>
-          <Box
-            mt={2}
-            borderRadius="full"
-            bg="gray.200"
-            height="8px"
-            overflow="hidden"
+    <Container maxW="full" py={8} px={{ base: 4, md: 8 }}>
+      <Toaster />
+      <Flex
+        justify="space-between"
+        align={{ base: "start", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={4}
+        mb={8}
+      >
+        <Box>
+          <Heading
+            size="2xl"
+            mb={2}
+            bgGradient="linear(to-r, brand.700, brand.500)"
+            bgClip="text"
           >
-            <Box
-              height="full"
-              bgGradient="linear(to-r, teal.400, blue.500)"
-              width={`${progressPercent}%`}
-              transition="width 0.2s"
-            />
+            Gestion des Trajets
+          </Heading>
+          <Text color="gray.500" fontSize="lg">
+            Planification et optimisation logistique.
+          </Text>
+        </Box>
+        <Stack direction="row" gap={3}>
+          <Button
+            colorPalette="orange"
+            variant="surface"
+            size="lg"
+            onClick={() => optimizeMutation.mutate()}
+            loading={optimizeMutation.isPending}
+          >
+            <FiZap /> Optimiser (IA)
+          </Button>
+          <Button
+            colorPalette="brand"
+            size="lg"
+            onClick={() => openModal()}
+            boxShadow="md"
+          >
+            <FiPlus /> Nouveau Trajet
+          </Button>
+        </Stack>
+      </Flex>
+
+      <SimpleGrid columns={{ base: 1, md: 3 }} gap={6} mb={8}>
+        <StatCard
+          label="Total Trajets"
+          value={stats.total}
+          color="brand.600"
+          icon={FiCalendar}
+        />
+        <StatCard
+          label="Planifiés"
+          value={stats.planned}
+          color="purple.600"
+          icon={FiClock}
+        />
+        <StatCard
+          label="En Cours"
+          value={stats.active}
+          color="blue.600"
+          icon={FiCheckCircle}
+        />
+      </SimpleGrid>
+
+      <CardRoot variant="elevated" borderRadius="xl" boxShadow="sm">
+        <CardBody p={0}>
+          <Box overflowX="auto">
+            <Table.Root interactive size="lg">
+              <Table.Header bg="gray.50">
+                <Table.Row>
+                  <Table.ColumnHeader>Trajet</Table.ColumnHeader>
+                  <Table.ColumnHeader>Véhicule</Table.ColumnHeader>
+                  <Table.ColumnHeader>Horaires</Table.ColumnHeader>
+                  <Table.ColumnHeader>Cargaison</Table.ColumnHeader>
+                  <Table.ColumnHeader>Statut</Table.ColumnHeader>
+                  <Table.ColumnHeader textAlign="right">
+                    Actions
+                  </Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {isLoading ? (
+                  <Table.Row>
+                    <Table.Cell colSpan={6}>
+                      <SkeletonText noOfLines={3} gap={4} />
+                    </Table.Cell>
+                  </Table.Row>
+                ) : (
+                  trips.map((trip) => {
+                    const status =
+                      statusConfig[trip.status as keyof typeof statusConfig] ||
+                      statusConfig.planifie;
+                    return (
+                      <Table.Row key={trip.id}>
+                        <Table.Cell>
+                          <Text fontWeight="bold">{trip.departure_point}</Text>
+                          <Text fontSize="sm" color="gray.500">
+                            ↓ {trip.arrival_point}
+                          </Text>
+                        </Table.Cell>
+                        <Table.Cell>
+                          <Badge variant="surface">{trip.vehicle_id}</Badge>
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            {trip.driver_name || "Sans chauffeur"}
+                          </Text>
+                        </Table.Cell>
+                        <Table.Cell>
+                          <Text fontSize="sm">
+                            {new Date(
+                              trip.departure_datetime
+                            ).toLocaleDateString()}
+                          </Text>
+                          <Text fontSize="xs" color="gray.500">
+                            {new Date(
+                              trip.departure_datetime
+                            ).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </Text>
+                        </Table.Cell>
+                        <Table.Cell>
+                          <Text fontSize="sm">
+                            {cargoCategories[
+                              trip.cargo_category as keyof typeof cargoCategories
+                            ] || trip.cargo_category}
+                          </Text>
+                          <Text fontSize="xs">{trip.cargo_weight_kg} kg</Text>
+                        </Table.Cell>
+                        <Table.Cell>
+                          <Badge
+                            colorPalette={status.color}
+                            borderRadius="full"
+                            px={2}
+                          >
+                            {status.label}
+                          </Badge>
+                        </Table.Cell>
+                        <Table.Cell textAlign="right">
+                          <MenuRoot>
+                            <MenuTrigger asChild>
+                              <IconButton
+                                variant="ghost"
+                                size="sm"
+                                aria-label="options"
+                              >
+                                <FiMoreVertical />
+                              </IconButton>
+                            </MenuTrigger>
+                            <MenuContent>
+                              <MenuItem
+                                onClick={() => openModal(trip)}
+                                value="edit"
+                              >
+                                <FiEdit2 /> Modifier
+                              </MenuItem>
+                              <MenuItem
+                                onClick={() => deleteMutation.mutate(trip.id)}
+                                color="red.500"
+                                value="delete"
+                              >
+                                <FiTrash2 /> Supprimer
+                              </MenuItem>
+                            </MenuContent>
+                          </MenuRoot>
+                        </Table.Cell>
+                      </Table.Row>
+                    );
+                  })
+                )}
+              </Table.Body>
+            </Table.Root>
           </Box>
-
-          <HStack mt={4} gap={4}>
-            <Flex alignItems="center" flex={1}>
-              <Icon
-                as={FiBriefcase}
-                color={step >= 1 ? "teal.500" : "gray.300"}
-                mr={2}
-              />
-              <Text
-                fontSize="sm"
-                color={step >= 1 ? "teal.600" : "gray.400"}
-                fontWeight={step === 1 ? "bold" : "normal"}
-              >
-                Informations Générales
-              </Text>
-            </Flex>
-            <Flex alignItems="center" flex={1}>
-              <Icon
-                as={FiMapPin}
-                color={step >= 2 ? "teal.500" : "gray.300"}
-                mr={2}
-              />
-              <Text
-                fontSize="sm"
-                color={step >= 2 ? "teal.600" : "gray.400"}
-                fontWeight={step === 2 ? "bold" : "normal"}
-              >
-                Secteur d'Activité
-              </Text>
-            </Flex>
-            <Flex alignItems="center" flex={1}>
-              <Icon
-                as={FiUser}
-                color={step >= 3 ? "teal.500" : "gray.300"}
-                mr={2}
-              />
-              <Text
-                fontSize="sm"
-                color={step >= 3 ? "teal.600" : "gray.400"}
-                fontWeight={step === 3 ? "bold" : "normal"}
-              >
-                Représentant Légal
-              </Text>
-            </Flex>
-          </HStack>
         </CardBody>
       </CardRoot>
 
-      <CardRoot variant="elevated" borderRadius="xl">
-        <CardBody p={8}>
-          {step === 1 && (
-            <VStack gap={6} align="stretch">
-              <FieldGroup label="Nom de l'Entreprise" required>
-                <Input
-                  value={formData.company_name}
-                  onChange={(event) =>
-                    updateField("company_name", event.target.value)
-                  }
-                  placeholder="Ex: Entreprise Logistique Algérie"
-                  size="lg"
-                  _invalid={errors.company_name ? {} : undefined}
-                />
-                {errors.company_name && (
-                  <Text color="red.500" fontSize="sm" mt={1}>
-                    {errors.company_name}
-                  </Text>
-                )}
-              </FieldGroup>
-
-              <HStack gap={4} align={{ base: "stretch", md: "center" }}>
-                <FieldGroup label="NIS (15 chiffres max)" required flex={1}>
-                  <Input
-                    value={formData.nis}
-                    onChange={(event) => updateField("nis", event.target.value)}
-                    placeholder="123456789012345"
-                    maxLength={15}
-                    _invalid={errors.nis ? {} : undefined}
-                    size="lg"
-                  />
-                  {errors.nis && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.nis}
-                    </Text>
-                  )}
-                </FieldGroup>
-
-                <FieldGroup label="NIF (15-20 chiffres)" required flex={1}>
-                  <Input
-                    value={formData.nif}
-                    onChange={(event) => updateField("nif", event.target.value)}
-                    placeholder="123456789012345678"
-                    minLength={15}
-                    maxLength={20}
-                    _invalid={errors.nif ? {} : undefined}
-                    size="lg"
-                  />
-                  {errors.nif && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.nif}
-                    </Text>
-                  )}
-                </FieldGroup>
-              </HStack>
-
-              <FieldGroup label="Adresse du Siège Social" required>
-                <Textarea
-                  value={formData.headquarters_address}
-                  onChange={(event) =>
-                    updateField("headquarters_address", event.target.value)
-                  }
-                  placeholder="Ex: Rue de la République, Oran, Algérie"
-                  rows={3}
-                  _invalid={errors.headquarters_address ? {} : undefined}
-                  size="lg"
-                />
-                {errors.headquarters_address && (
-                  <Text color="red.500" fontSize="sm" mt={1}>
-                    {errors.headquarters_address}
-                  </Text>
-                )}
-              </FieldGroup>
-
-              <FieldGroup label="Type d'Entreprise" required>
-                <StyledSelect
-                  value={formData.company_type}
-                  onChange={(event) =>
-                    updateField(
-                      "company_type",
-                      event.target.value as CompanyType,
-                    )
-                  }
-                  {...SELECT_BASE_PROPS}
-                >
-                  {Object.entries(COMPANY_TYPES).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </StyledSelect>
-              </FieldGroup>
-            </VStack>
-          )}
-
-          {step === 2 && (
-            <VStack gap={6} align="stretch">
-              <FieldGroup label="Secteur d'Activité Principal" required>
-                <StyledSelect
-                  value={formData.activity_sector}
-                  onChange={(event) =>
-                    updateField(
-                      "activity_sector",
-                      event.target.value as ActivitySector,
-                    )
-                  }
-                  {...SELECT_BASE_PROPS}
-                >
-                  {Object.entries(ACTIVITY_SECTORS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </StyledSelect>
-              </FieldGroup>
-
-              <FieldGroup
-                label="Spécification du Secteur (Optionnel)"
-                helper="Précisez si votre activité implique des marchandises spécifiques"
-              >
-                <Input
-                  value={formData.sector_specification}
-                  onChange={(event) =>
-                    updateField("sector_specification", event.target.value)
-                  }
-                  placeholder="Ex: Transport de produits frais et surgelés"
-                  size="lg"
-                />
-              </FieldGroup>
-
-              <FieldGroup label="Type de Partenaire" required>
-                <StyledSelect
-                  value={formData.partner_type}
-                  onChange={(event) =>
-                    updateField(
-                      "partner_type",
-                      event.target.value as PartnerType,
-                    )
-                  }
-                  {...SELECT_BASE_PROPS}
-                >
-                  <option value="entreprise">Entreprise</option>
-                  <option value="prestataire_logistique">
-                    Prestataire Logistique
-                  </option>
-                </StyledSelect>
-              </FieldGroup>
-
-              <Box bg="blue.50" p={4} borderRadius="lg">
-                <Text fontSize="sm" color="blue.700">
-                  <strong>Note:</strong> Le secteur d'activité déterminera les
-                  catégories de véhicules et de marchandises compatibles avec
-                  votre entreprise lors de l'optimisation.
-                </Text>
-              </Box>
-            </VStack>
-          )}
-
-          {step === 3 && (
-            <VStack gap={6} align="stretch">
-              <FieldGroup label="Nom du Représentant Légal" required>
-                <Input
-                  value={formData.legal_representative_name}
-                  onChange={(event) =>
-                    updateField("legal_representative_name", event.target.value)
-                  }
-                  placeholder="Ex: Ahmed Benali"
-                  _invalid={errors.legal_representative_name ? {} : undefined}
-                  size="lg"
-                />
-                {errors.legal_representative_name && (
-                  <Text color="red.500" fontSize="sm" mt={1}>
-                    {errors.legal_representative_name}
-                  </Text>
-                )}
-              </FieldGroup>
-
-              <FieldGroup label="Contact du Représentant" required>
-                <Input
-                  value={formData.legal_representative_contact}
-                  onChange={(event) =>
-                    updateField(
-                      "legal_representative_contact",
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Ex: +213 555 123 456"
-                  _invalid={
-                    errors.legal_representative_contact ? {} : undefined
-                  }
-                  size="lg"
-                />
-                {errors.legal_representative_contact && (
-                  <Text color="red.500" fontSize="sm" mt={1}>
-                    {errors.legal_representative_contact}
-                  </Text>
-                )}
-              </FieldGroup>
-
-              <Box bg="green.50" p={4} borderRadius="lg">
-                <Flex alignItems="start">
-                  <Icon as={FiCheckCircle} color="green.600" mt={1} mr={3} />
-                  <Box>
-                    <Text
-                      fontSize="sm"
-                      fontWeight="bold"
-                      color="green.800"
-                      mb={1}
-                    >
-                      Prêt à valider
-                    </Text>
-                    <Text fontSize="sm" color="green.700">
-                      Votre profil d'entreprise sera soumis pour vérification.
-                      Vous recevrez une notification une fois validé.
-                    </Text>
-                  </Box>
-                </Flex>
-              </Box>
-            </VStack>
-          )}
-
-          <HStack mt={8} justifyContent="space-between">
-            <Button
-              variant="ghost"
-              onClick={prevStep}
-              disabled={step === 1}
-              size="lg"
+      {/* Modal */}
+      <DialogRoot
+        open={isModalOpen}
+        onOpenChange={(e) => !e.open && closeModal()}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingTrip ? "Modifier" : "Nouveau"} Trajet
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <Stack
+              gap={4}
+              as="form"
+              id="trip-form"
+              onSubmit={handleSubmit(onSubmit)}
             >
-              Précédent
+              <SimpleGrid columns={2} gap={4}>
+                <Field
+                  label="Départ"
+                  invalid={!!errors.departure_point}
+                  required
+                >
+                  <Input
+                    {...register("departure_point", { required: "Requis" })}
+                  />
+                </Field>
+                <Field
+                  label="Arrivée"
+                  invalid={!!errors.arrival_point}
+                  required
+                >
+                  <Input
+                    {...register("arrival_point", { required: "Requis" })}
+                  />
+                </Field>
+              </SimpleGrid>
+
+              <SimpleGrid columns={2} gap={4}>
+                <Field
+                  label="Date/Heure Départ"
+                  invalid={!!errors.departure_datetime}
+                  required
+                >
+                  <Input
+                    type="datetime-local"
+                    {...register("departure_datetime", { required: "Requis" })}
+                  />
+                </Field>
+                <Field label="Date/Heure Arrivée (Estimée)" required>
+                  <Input
+                    type="datetime-local"
+                    {...register("arrival_datetime_planned", {
+                      required: "Requis",
+                    })}
+                  />
+                </Field>
+              </SimpleGrid>
+
+              <SimpleGrid columns={2} gap={4}>
+                <Field label="Véhicule ID" required>
+                  <Input {...register("vehicle_id", { required: "Requis" })} />
+                </Field>
+                <Field label="Chauffeur">
+                  <Input {...register("driver_name")} />
+                </Field>
+              </SimpleGrid>
+
+              <SimpleGrid columns={2} gap={4}>
+                <Field label="Poids (kg)" required>
+                  <Input
+                    type="number"
+                    {...register("cargo_weight_kg", { required: "Requis" })}
+                  />
+                </Field>
+                <Field label="Type" required>
+                  <select
+                    {...register("material_type")}
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      borderRadius: "6px",
+                      border: "1px solid #E2E8F0",
+                    }}
+                  >
+                    <option value="solide">Solide</option>
+                    <option value="liquide">Liquide</option>
+                    <option value="gaz">Gaz</option>
+                  </select>
+                </Field>
+              </SimpleGrid>
+            </Stack>
+          </DialogBody>
+          <DialogFooter>
+            <DialogActionTrigger asChild>
+              <Button variant="ghost" onClick={closeModal}>
+                Annuler
+              </Button>
+            </DialogActionTrigger>
+            <Button
+              form="trip-form"
+              type="submit"
+              loading={isSubmitting || createMutation.isPending}
+              colorPalette="brand"
+            >
+              Enregistrer
             </Button>
-
-            {step < 3 ? (
-              <Button
-                colorScheme="teal"
-                onClick={nextStep}
-                size="lg"
-                disabled={isNextDisabled}
-              >
-                Suivant
-              </Button>
-            ) : (
-              <Button
-                colorScheme="teal"
-                onClick={handleSubmit}
-                size="lg"
-                disabled={!isStepThreeValid}
-                loading={isSubmitting}
-              >
-                Créer l'Entreprise
-              </Button>
-            )}
-          </HStack>
-        </CardBody>
-      </CardRoot>
+          </DialogFooter>
+          <DialogCloseTrigger />
+        </DialogContent>
+      </DialogRoot>
     </Container>
-  )
-}
+  );
+};
 
-export default CompanyRegistrationForm
+const StatCard = ({
+  label,
+  value,
+  color,
+  icon: IconComp,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  icon: any;
+}) => (
+  <CardRoot
+    borderRadius="xl"
+    borderLeft="4px solid"
+    borderColor={color}
+    boxShadow="sm"
+  >
+    <CardBody>
+      <Flex justify="space-between" align="center">
+        <Box>
+          <Text fontSize="sm" color="gray.500" fontWeight="medium">
+            {label}
+          </Text>
+          <Text fontSize="3xl" fontWeight="bold" color={color}>
+            {value}
+          </Text>
+        </Box>
+        <Box p={2} bg={`${color.split(".")[0]}.50`} borderRadius="lg">
+          <Icon as={IconComp} size="lg" color={color} />
+        </Box>
+      </Flex>
+    </CardBody>
+  </CardRoot>
+);
+
+export default TripManagementPage;

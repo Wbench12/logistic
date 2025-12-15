@@ -1,58 +1,70 @@
-import { Box, Button, Flex, Text } from "@chakra-ui/react"
+import { Avatar, Box, Flex, HStack, Text } from "@chakra-ui/react"
 import { Link } from "@tanstack/react-router"
-import { FaUserAstronaut } from "react-icons/fa"
-import { FiLogOut, FiUser } from "react-icons/fi"
+import { FiLogOut, FiSettings, FiUser } from "react-icons/fi"
 
 import useAuth from "@/hooks/useAuth"
-import { MenuContent, MenuItem, MenuRoot, MenuTrigger } from "../ui/menu"
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from "@/components/ui/menu"
 
 const UserMenu = () => {
   const { user, logout } = useAuth()
 
-  const handleLogout = async () => {
-    logout()
-  }
-
   return (
-    <>
-      {/* Desktop */}
-      <Flex>
-        <MenuRoot>
-          <MenuTrigger asChild p={2}>
-            <Button data-testid="user-menu" variant="solid" maxW="sm" truncate>
-              <FaUserAstronaut fontSize="18" />
-              <Text>{user?.full_name || "User"}</Text>
-            </Button>
-          </MenuTrigger>
+    <MenuRoot positioning={{ placement: "bottom-end" }}>
+      <MenuTrigger asChild cursor="pointer">
+        <HStack 
+            gap={3} 
+            p={1.5} 
+            pr={3}
+            borderRadius="full" 
+            transition="background 0.2s" 
+            _hover={{ bg: "gray.50" }}
+        >
+          <Avatar.Root size="sm" colorPalette="brand" variant="solid">
+            <Avatar.Fallback name={user?.full_name || "User"} />
+          </Avatar.Root>
+          {/* Hide name on mobile to save space, show on desktop */}
+          <Box display={{ base: "none", md: "block" }}>
+             <Text fontSize="sm" fontWeight="medium" color="gray.700" lineHeight="1">
+                {user?.full_name?.split(" ")[0]}
+             </Text>
+          </Box>
+        </HStack>
+      </MenuTrigger>
 
-          <MenuContent>
-            <Link to="/settings">
-              <MenuItem
-                closeOnSelect
-                value="user-settings"
-                gap={2}
-                py={2}
-                style={{ cursor: "pointer" }}
-              >
-                <FiUser fontSize="18px" />
-                <Box flex="1">My Profile</Box>
-              </MenuItem>
-            </Link>
+      <MenuContent minW="200px" borderRadius="xl" boxShadow="lg">
+        <Box px={3} py={2} borderBottomWidth="1px" borderColor="gray.100">
+           <Text fontSize="sm" fontWeight="bold" color="gray.800">Compte</Text>
+           <Text fontSize="xs" color="gray.500" truncate>{user?.email}</Text>
+        </Box>
 
-            <MenuItem
-              value="logout"
-              gap={2}
-              py={2}
-              onClick={handleLogout}
-              style={{ cursor: "pointer" }}
-            >
-              <FiLogOut />
-              Log Out
-            </MenuItem>
-          </MenuContent>
-        </MenuRoot>
-      </Flex>
-    </>
+        <Link to="/settings">
+          <MenuItem value="profile" gap={2} p={2.5}>
+            <FiUser /> Mon Profil
+          </MenuItem>
+        </Link>
+        <Link to="/settings">
+           <MenuItem value="settings" gap={2} p={2.5}>
+             <FiSettings /> Paramètres
+           </MenuItem>
+        </Link>
+        
+        <MenuItem 
+            value="logout" 
+            gap={2} 
+            p={2.5} 
+            color="red.600" 
+            _hover={{ bg: "red.50" }}
+            onClick={logout}
+        >
+          <FiLogOut /> Se déconnecter
+        </MenuItem>
+      </MenuContent>
+    </MenuRoot>
   )
 }
 

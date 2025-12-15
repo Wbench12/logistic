@@ -11,7 +11,8 @@ from app.core.config import settings
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
-    return f"{route.tags[0]}-{route.name}"
+    tag = route.tags[0] if route.tags else "default"
+    return f"{tag}-{route.name}"
 
 
 def format_validation_error(error: ValidationError | RequestValidationError) -> dict:
@@ -86,17 +87,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 if settings.all_cors_origins:
     allow_origins = settings.all_cors_origins
     allow_credentials = True
+    allow_origin_regex = None
 
+    # In local dev, browsers often send credentialed requests (cookies).
+    # Using "*" as allow_origins breaks credentialed CORS, so prefer an origin regex.
     if settings.ENVIRONMENT == "local":
-        allow_origins = ["*"]
-        allow_credentials = False
+        allow_origin_regex = r"^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$"
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
+        allow_origin_regex=allow_origin_regex,
         allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)

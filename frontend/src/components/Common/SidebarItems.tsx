@@ -1,23 +1,23 @@
 import { Box, Flex, Icon, Text } from "@chakra-ui/react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Link as RouterLink } from "@tanstack/react-router"
+import { Link as RouterLink, useLocation } from "@tanstack/react-router"
 import {
   FiBriefcase,
-  FiHome,
-  FiNavigation,
+  FiGrid,
+  FiMap,
   FiSettings,
   FiTruck,
   FiUsers,
 } from "react-icons/fi"
-import type { IconType } from "react-icons/lib"
 
 import type { UserPublic } from "@/client"
 
+// Navigation Config
 const items = [
-  { icon: FiHome, title: "Dashboard", path: "/" },
-  { icon: FiTruck, title: "Véhicules", path: "/vehicles" },
-  { icon: FiNavigation, title: "Trajets", path: "/trips" },
-  { icon: FiBriefcase, title: "Profil Entreprise", path: "/company" },
+  { icon: FiGrid, title: "Tableau de Bord", path: "/" },
+  { icon: FiTruck, title: "Gestion Flotte", path: "/vehicles" },
+  { icon: FiMap, title: "Trajets & Missions", path: "/trips" },
+  { icon: FiBriefcase, title: "Entreprise", path: "/company" },
   { icon: FiSettings, title: "Paramètres", path: "/settings" },
 ]
 
@@ -25,45 +25,63 @@ interface SidebarItemsProps {
   onClose?: () => void
 }
 
-interface Item {
-  icon: IconType
-  title: string
-  path: string
-}
-
 const SidebarItems = ({ onClose }: SidebarItemsProps) => {
   const queryClient = useQueryClient()
   const currentUser = queryClient.getQueryData<UserPublic>(["currentUser"])
+  const { pathname } = useLocation()
 
-  const finalItems: Item[] = currentUser?.is_superuser
-    ? [...items, { icon: FiUsers, title: "Admin", path: "/admin" }]
+  // Add Admin link if superuser
+  const finalItems = currentUser?.is_superuser
+    ? [...items, { icon: FiUsers, title: "Administration", path: "/admin" }]
     : items
 
-  const listItems = finalItems.map(({ icon, title, path }) => (
-    <RouterLink key={title} to={path} onClick={onClose}>
-      <Flex
-        gap={4}
-        px={4}
-        py={2}
-        _hover={{
-          background: "gray.subtle",
-        }}
-        alignItems="center"
-        fontSize="sm"
-      >
-        <Icon as={icon} alignSelf="center" />
-        <Text ml={2}>{title}</Text>
-      </Flex>
-    </RouterLink>
-  ))
-
   return (
-    <>
-      <Text fontSize="xs" px={4} py={2} fontWeight="bold">
-        Menu
-      </Text>
-      <Box>{listItems}</Box>
-    </>
+    <Box as="ul" listStyleType="none" m={0} p={0} w="full">
+      {finalItems.map(({ icon, title, path }) => {
+        // Simple active check: Exact match or starts with path (except root)
+        const isActive = path === "/" ? pathname === "/" : pathname.startsWith(path)
+
+        return (
+          <Box as="li" key={path} px={4} mb={1}>
+            <RouterLink to={path} onClick={onClose} style={{ textDecoration: 'none' }}>
+              <Flex
+                align="center"
+                gap={3}
+                p={3}
+                borderRadius="lg"
+                cursor="pointer"
+                transition="all 0.2s ease"
+                bg={isActive ? "brand.50" : "transparent"}
+                color={isActive ? "brand.700" : "gray.600"}
+                fontWeight={isActive ? "semibold" : "medium"}
+                position="relative"
+                _hover={{
+                  bg: isActive ? "brand.50" : "gray.50",
+                  color: isActive ? "brand.700" : "gray.900",
+                }}
+              >
+                {/* Active Indicator Line (Optional, decorative) */}
+                {isActive && (
+                  <Box 
+                    position="absolute" 
+                    left="0" 
+                    top="50%" 
+                    transform="translateY(-50%)" 
+                    h="20px" 
+                    w="3px" 
+                    bg="brand.600" 
+                    borderRightRadius="full"
+                  />
+                )}
+
+                <Icon as={icon} fontSize="lg" />
+                <Text fontSize="sm">{title}</Text>
+              </Flex>
+            </RouterLink>
+          </Box>
+        )
+      })}
+    </Box>
   )
 }
 

@@ -76,6 +76,11 @@ class CompanyBase(SQLModel):
     logo_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
     is_verified: bool = False
+    
+    # New: Depot coordinates for return route calculation
+    depot_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    depot_lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    depot_address: Optional[str] = Field(default=None, max_length=500)
 
     @field_validator('nis')
     @classmethod
@@ -132,6 +137,9 @@ class CompanyUpdate(SQLModel):
     legal_representative_contact: Optional[str] = Field(default=None, max_length=50)
     logo_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
+    depot_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    depot_lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    depot_address: Optional[str] = Field(default=None, max_length=500)
 
 class Company(CompanyBase, table=True):
     __tablename__: str = "companies"
@@ -183,8 +191,6 @@ class VehicleCategory(str, Enum):
     CH3 = "ch3_camion_citerne_gaz"
     CH4 = "ch4_camion_adr"
     CH5 = "ch5_camion_cuve_calorifugee"
-    
-    # Add more categories as needed...
 
 class VehicleStatus(str, Enum):
     AVAILABLE = "disponible"
@@ -208,6 +214,14 @@ class VehicleBase(SQLModel):
     brand: Optional[str] = Field(default=None, max_length=100)
     model: Optional[str] = Field(default=None, max_length=100)
     fuel_type: Optional[str] = Field(default=None, max_length=50)
+    
+    # New: Operational costs for KPI calculation
+    cost_per_km: Optional[float] = Field(default=0.5, ge=0)
+    fuel_consumption_l_per_100km: Optional[float] = Field(default=30.0, ge=0)
+    
+    # New: Depot location for this vehicle
+    depot_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    depot_lng: Optional[float] = Field(default=None, ge=-180, le=180)
 
 class VehicleCreate(VehicleBase):
     company_id: uuid.UUID
@@ -225,6 +239,10 @@ class VehicleUpdate(SQLModel):
     brand: Optional[str] = Field(default=None, max_length=100)
     model: Optional[str] = Field(default=None, max_length=100)
     fuel_type: Optional[str] = Field(default=None, max_length=50)
+    cost_per_km: Optional[float] = Field(default=None, ge=0)
+    fuel_consumption_l_per_100km: Optional[float] = Field(default=None, ge=0)
+    depot_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    depot_lng: Optional[float] = Field(default=None, ge=-180, le=180)
 
 class Vehicle(VehicleBase, table=True):
     __tablename__ = "vehicles"
@@ -244,6 +262,7 @@ class VehiclePublic(VehicleBase):
     id: uuid.UUID
     company_id: uuid.UUID
     created_at: datetime
+    updated_at: datetime
 
 class VehiclesPublic(SQLModel):
     data: list[VehiclePublic]

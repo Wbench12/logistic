@@ -6,463 +6,475 @@ import {
   CardHeader,
   CardRoot,
   Container,
-  chakra,
   Flex,
   Heading,
+  HStack,
+  Icon,
+  Image,
   Input,
   Separator,
   SimpleGrid,
-  Spinner,
   Stack,
   Text,
   Textarea,
-} from "@chakra-ui/react"
-import { type ChangeEvent, type ReactNode, useEffect, useState } from "react"
-import { FiBriefcase, FiMapPin, FiPhone, FiUser } from "react-icons/fi"
-import type { IconType } from "react-icons/lib"
+} from "@chakra-ui/react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import {
+  FiBriefcase,
+  FiCheckCircle,
+  FiEdit2,
+  FiMapPin,
+  FiSave,
+  FiShield,
+  FiUser,
+  FiX,
+} from "react-icons/fi";
 
-import type {
-  ActivitySector,
-  CompanyPublic,
-  CompanyType,
-  CompanyUpdate,
-  PartnerType,
-} from "@/client"
-import CompanyRegistrationForm from "@/components/Company/CompanyRegistrationForm"
-import { useCompany } from "@/hooks/useCompany"
+import { type ApiError, type CompanyUpdate, CompaniesService } from "@/client";
+import { useCompany } from "@/hooks/useCompany";
+import { Field } from "@/components/ui/field";
+import { Toaster, toaster } from "@/components/ui/toaster";
+import { handleError } from "@/utils";
+import { SkeletonText, SkeletonCircle } from "@/components/ui/skeleton";
 
-interface CompanyFormState {
-  company_name: string
-  nis: string
-  nif: string
-  headquarters_address: string
-  company_type: CompanyType
-  activity_sector: ActivitySector
-  sector_specification: string
-  partner_type: PartnerType
-  legal_representative_name: string
-  legal_representative_contact: string
-  logo_url: string
-}
-
-const COMPANY_TYPE_OPTIONS: Array<{ value: CompanyType; label: string }> = [
+// Config Options
+const COMPANY_TYPE_OPTIONS = [
   { value: "production", label: "Production" },
   { value: "negoce", label: "Négoce" },
   { value: "service", label: "Services" },
-]
+];
 
-const PARTNER_TYPE_OPTIONS: Array<{ value: PartnerType; label: string }> = [
+const PARTNER_TYPE_OPTIONS = [
   { value: "entreprise", label: "Entreprise" },
   { value: "prestataire_logistique", label: "Prestataire Logistique" },
-]
+];
 
-const ACTIVITY_SECTOR_OPTIONS: Array<{ value: ActivitySector; label: string }> =
-  [
-    { value: "agroalimentaire", label: "Agroalimentaire" },
-    { value: "construction_btp", label: "Construction & BTP" },
-    { value: "industriel_manufacturier", label: "Industrie & Manufactures" },
-    { value: "chimique_petrochimique", label: "Chimie & Pétrochimie" },
-    { value: "agricole_rural", label: "Agricole & Rural" },
-    { value: "logistique_messagerie", label: "Logistique & Messagerie" },
-    { value: "medical_parapharmaceutique", label: "Médical & Parapharma" },
-    { value: "hygiene_dechets_environnement", label: "Hygiène & Déchets" },
-    { value: "energie_ressources_naturelles", label: "Énergie" },
-    { value: "logistique_speciale", label: "Logistique Spéciale" },
-    { value: "autre", label: "Autre" },
-  ]
-
-const INITIAL_FORM: CompanyFormState = {
-  company_name: "",
-  nis: "",
-  nif: "",
-  headquarters_address: "",
-  company_type: "production",
-  activity_sector: "agroalimentaire",
-  sector_specification: "",
-  partner_type: "entreprise",
-  legal_representative_name: "",
-  legal_representative_contact: "",
-  logo_url: "",
-}
-
-const toFormState = (company: CompanyPublic): CompanyFormState => ({
-  company_name: company.company_name,
-  nis: company.nis,
-  nif: company.nif,
-  headquarters_address: company.headquarters_address,
-  company_type: company.company_type,
-  activity_sector: company.activity_sector,
-  sector_specification: company.sector_specification ?? "",
-  partner_type: company.partner_type,
-  legal_representative_name: company.legal_representative_name,
-  legal_representative_contact: company.legal_representative_contact,
-  logo_url: company.logo_url ?? "",
-})
-
-const normalizeUpdatePayload = (state: CompanyFormState): CompanyUpdate => ({
-  company_name: state.company_name || undefined,
-  headquarters_address: state.headquarters_address || undefined,
-  company_type: state.company_type || undefined,
-  activity_sector: state.activity_sector || undefined,
-  sector_specification: state.sector_specification || undefined,
-  partner_type: state.partner_type || undefined,
-  legal_representative_name: state.legal_representative_name || undefined,
-  legal_representative_contact: state.legal_representative_contact || undefined,
-  logo_url: state.logo_url || undefined,
-})
-
-const StyledSelect = chakra("select")
-
-const FieldGroup = ({
-  label,
-  helper,
-  required,
-  children,
-}: {
-  label: string
-  helper?: string
-  required?: boolean
-  children: ReactNode
-}) => (
-  <Stack gap={1}>
-    <chakra.label fontSize="sm" fontWeight="semibold">
-      {label}
-      {required && (
-        <Text as="span" color="red.500" ml={1}>
-          *
-        </Text>
-      )}
-    </chakra.label>
-    {children}
-    {helper && (
-      <Text fontSize="sm" color="gray.500">
-        {helper}
-      </Text>
-    )}
-  </Stack>
-)
+const ACTIVITY_SECTOR_OPTIONS = [
+  { value: "agroalimentaire", label: "Agroalimentaire" },
+  { value: "construction_btp", label: "Construction & BTP" },
+  { value: "industriel_manufacturier", label: "Industrie & Manufactures" },
+  { value: "chimique_petrochimique", label: "Chimie & Pétrochimie" },
+  { value: "agricole_rural", label: "Agricole & Rural" },
+  { value: "logistique_messagerie", label: "Logistique & Messagerie" },
+  { value: "autre", label: "Autre" },
+];
 
 const CompanyProfile = () => {
-  const {
-    company,
-    isLoading,
-    isCreating,
-    isUpdating,
-    createCompany,
-    updateCompany,
-  } = useCompany()
-  const [formState, setFormState] = useState<CompanyFormState>(
-    company ? toFormState(company) : INITIAL_FORM,
-  )
+  const queryClient = useQueryClient();
+  const { company, isLoading, refetchCompany } = useCompany();
+  const [isEditing, setIsEditing] = useState(false);
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<CompanyUpdate>();
+
+  const logoUrlValue = watch("logo_url");
+
+  // Sync form with data when loaded
   useEffect(() => {
     if (company) {
-      setFormState(toFormState(company))
-      return
+      reset(company);
     }
-    setFormState(INITIAL_FORM)
-  }, [company])
+  }, [company, reset]);
+
+  const mutation = useMutation({
+    mutationFn: (data: CompanyUpdate) =>
+      CompaniesService.updateCompanyMe({ requestBody: data }),
+    onSuccess: () => {
+      toaster.success({
+        title: "Profil mis à jour",
+        description: "Les modifications ont été enregistrées.",
+      });
+      setIsEditing(false);
+      refetchCompany();
+      queryClient.invalidateQueries({ queryKey: ["companyProfile"] });
+    },
+    onError: (err: ApiError) => handleError(err),
+  });
+
+  const onSubmit = (data: CompanyUpdate) => {
+    mutation.mutate(data);
+  };
 
   if (isLoading) {
-    return (
-      <Flex align="center" justify="center" minH="60vh">
-        <Spinner size="xl" />
-      </Flex>
-    )
+    return <ProfileSkeleton />;
   }
 
-  const isSubmitting = isCreating || isUpdating
-
-  if (!company) {
-    return (
-      <CompanyRegistrationForm
-        onSubmit={async (payload) => {
-          await createCompany(payload)
-        }}
-        isSubmitting={isCreating}
-        showSuccessToast={false}
-      />
-    )
-  }
-
-  const handleChange = <Key extends keyof CompanyFormState>(
-    key: Key,
-    value: CompanyFormState[Key],
-  ) => {
-    setFormState((prev) => ({
-      ...prev,
-      [key]: value,
-    }))
-  }
-
-  const handleSubmit = async () => {
-    await updateCompany(normalizeUpdatePayload(formState))
-  }
-
-  const isFormValid =
-    Boolean(formState.company_name.trim()) &&
-    Boolean(formState.nis.trim()) &&
-    Boolean(formState.nif.trim()) &&
-    Boolean(formState.headquarters_address.trim()) &&
-    Boolean(formState.legal_representative_name.trim()) &&
-    Boolean(formState.legal_representative_contact.trim())
+  // If null (shouldn't happen due to layout modal, but safe guard)
+  if (!company) return null;
 
   return (
-    <Container maxW="6xl" py={10}>
-      <Flex
-        justify="space-between"
-        align={{ base: "flex-start", md: "center" }}
-        mb={10}
-        direction={{ base: "column", md: "row" }}
-        gap={4}
+    <Container maxW="container.xl" py={8} px={{ base: 4, md: 8 }}>
+      <Toaster />
+
+      {/* Header Banner */}
+      <Box
+        position="relative"
+        h="200px"
+        bgGradient="linear(to-r, brand.900, brand.700)"
+        borderRadius="2xl"
+        mb={16}
+        boxShadow="md"
+        overflow="visible"
       >
-        <Box>
-          <Heading size="xl" mb={2}>
-            Profil Entreprise
-          </Heading>
-          <Text color="gray.600">
-            Centralisez les informations légales de votre société pour générer
-            des documents conformes.
-          </Text>
+        <Box
+          position="absolute"
+          top="0"
+          left="0"
+          w="full"
+          h="full"
+          opacity="0.1"
+          bgImage="url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9IiNmZmYiLz48L3N2Zz4=')"
+        />
+
+        {/* Logo Card */}
+        <Box
+          position="absolute"
+          bottom="-50px"
+          left={{ base: "50%", md: "40px" }}
+          transform={{ base: "translateX(-50%)", md: "none" }}
+          bg="bg.panel"
+          p={2}
+          borderRadius="2xl"
+          boxShadow="lg"
+          borderWidth="1px"
+          borderColor="border.subtle"
+        >
+          <Image
+            src={
+              (isEditing ? logoUrlValue : company.logo_url) ??
+              "https://placehold.co/128x128?text=Logo"
+            }
+            alt="Company Logo"
+            boxSize="128px"
+            objectFit="contain"
+            borderRadius="xl"
+            bg="white"
+          />
         </Box>
-        {company && (
-          <Badge colorScheme="green" px={4} py={2} borderRadius="full">
-            Profil complété
-          </Badge>
-        )}
-      </Flex>
 
-      {company && (
-        <CardRoot borderRadius="2xl" mb={8} variant="elevated">
-          <CardHeader>
-            <Heading size="md">Informations enregistrées</Heading>
-          </CardHeader>
-          <CardBody>
-            <SimpleGrid columns={{ base: 1, md: 2 }} gap={6}>
-              <InfoTile
-                icon={FiBriefcase}
-                label="Raison sociale"
-                value={company.company_name}
-              />
-              <InfoTile
-                icon={FiUser}
-                label="Représentant"
-                value={company.legal_representative_name}
-              />
-              <InfoTile
-                icon={FiPhone}
-                label="Contact"
-                value={company.legal_representative_contact}
-              />
-              <InfoTile
-                icon={FiMapPin}
-                label="Adresse"
-                value={company.headquarters_address}
-              />
-            </SimpleGrid>
-          </CardBody>
-        </CardRoot>
-      )}
+        <Flex position="absolute" bottom={4} right={6}>
+          {!isEditing && (
+            <Button
+              onClick={() => setIsEditing(true)}
+              variant="surface"
+              colorPalette="white"
+              fontWeight="bold"
+            >
+              <FiEdit2 /> Modifier le profil
+            </Button>
+          )}
+        </Flex>
+      </Box>
 
-      <CardRoot borderRadius="2xl" variant="outline">
-        <CardHeader>
-          <Heading size="md">
-            {company ? "Mettre à jour le profil" : "Créer votre profil"}
-          </Heading>
-          <Text color="gray.600" mt={2}>
-            Ces informations seront utilisées pour les déclarations
-            administratives et le suivi logistique.
-          </Text>
-        </CardHeader>
-        <CardBody>
-          <SimpleGrid columns={{ base: 1, md: 2 }} gap={6}>
-            <FieldGroup label="Raison sociale" required>
-              <Input
-                value={formState.company_name}
-                onChange={(event) =>
-                  handleChange("company_name", event.target.value)
-                }
-              />
-            </FieldGroup>
-            <FieldGroup label="Représentant légal" required>
-              <Input
-                value={formState.legal_representative_name}
-                onChange={(event) =>
-                  handleChange("legal_representative_name", event.target.value)
-                }
-              />
-            </FieldGroup>
-            <FieldGroup label="NIS" required>
-              <Input
-                value={formState.nis}
-                onChange={(event) => handleChange("nis", event.target.value)}
-              />
-            </FieldGroup>
-            <FieldGroup label="NIF" required>
-              <Input
-                value={formState.nif}
-                onChange={(event) => handleChange("nif", event.target.value)}
-              />
-            </FieldGroup>
-            <FieldGroup label="Adresse du siège" required>
-              <Textarea
-                rows={3}
-                value={formState.headquarters_address}
-                onChange={(event) =>
-                  handleChange("headquarters_address", event.target.value)
-                }
-              />
-            </FieldGroup>
-            <FieldGroup label="Contact" required>
-              <Input
-                value={formState.legal_representative_contact}
-                onChange={(event) =>
-                  handleChange(
-                    "legal_representative_contact",
-                    event.target.value,
-                  )
-                }
-              />
-            </FieldGroup>
-          </SimpleGrid>
+      {/* Content Form */}
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <Flex direction={{ base: "column", lg: "row" }} gap={8}>
+          {/* Sidebar Info */}
+          <Stack flex="1" gap={6} maxW={{ lg: "350px" }}>
+            <CardRoot variant="elevated" borderRadius="xl" bg="bg.panel">
+              <CardBody>
+                {isEditing ? (
+                  <Stack gap={4}>
+                    <Field
+                      label="Nom de l'entreprise"
+                      required
+                      invalid={!!errors.company_name}
+                      errorText={errors.company_name?.message}
+                    >
+                      <Input
+                        {...register("company_name", { required: "Requis" })}
+                        fontWeight="bold"
+                        fontSize="lg"
+                      />
+                    </Field>
+                    <Field label="URL du Logo">
+                      <Input
+                        {...register("logo_url")}
+                        placeholder="https://..."
+                        fontSize="sm"
+                      />
+                    </Field>
+                  </Stack>
+                ) : (
+                  <Box>
+                    <Heading size="2xl" mb={2} color="fg.default">
+                      {company.company_name}
+                    </Heading>
+                    <HStack mb={4}>
+                      <Badge colorPalette="green" variant="solid">
+                        <FiCheckCircle /> Vérifié
+                      </Badge>
+                      <Badge colorPalette="blue" variant="subtle">
+                        {company.partner_type}
+                      </Badge>
+                    </HStack>
+                    <Text color="fg.muted" fontSize="sm">
+                      Membre depuis le{" "}
+                      {new Date(company.created_at).toLocaleDateString()}
+                    </Text>
+                  </Box>
+                )}
 
-          <Separator my={8} />
+                <Separator my={6} borderColor="border.subtle" />
 
-          <SimpleGrid columns={{ base: 1, md: 3 }} gap={6}>
-            <FieldGroup label="Type d'entreprise" required>
-              <StyledSelect
-                borderWidth="1px"
-                borderColor="gray.200"
-                borderRadius="md"
-                bg="white"
-                px={3}
-                py={2}
-                _focusVisible={{
-                  outline: "2px solid",
-                  outlineColor: "purple.500",
-                }}
-                value={formState.company_type}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                  handleChange(
-                    "company_type",
-                    event.target.value as CompanyType,
-                  )
-                }
-              >
-                {COMPANY_TYPE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </StyledSelect>
-            </FieldGroup>
-            <FieldGroup label="Secteur d'activité" required>
-              <StyledSelect
-                borderWidth="1px"
-                borderColor="gray.200"
-                borderRadius="md"
-                bg="white"
-                px={3}
-                py={2}
-                _focusVisible={{
-                  outline: "2px solid",
-                  outlineColor: "purple.500",
-                }}
-                value={formState.activity_sector}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                  handleChange(
-                    "activity_sector",
-                    event.target.value as ActivitySector,
-                  )
-                }
-              >
-                {ACTIVITY_SECTOR_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </StyledSelect>
-            </FieldGroup>
-            <FieldGroup label="Type de partenaire" required>
-              <StyledSelect
-                borderWidth="1px"
-                borderColor="gray.200"
-                borderRadius="md"
-                bg="white"
-                px={3}
-                py={2}
-                _focusVisible={{
-                  outline: "2px solid",
-                  outlineColor: "purple.500",
-                }}
-                value={formState.partner_type}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                  handleChange(
-                    "partner_type",
-                    event.target.value as PartnerType,
-                  )
-                }
-              >
-                {PARTNER_TYPE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </StyledSelect>
-            </FieldGroup>
-          </SimpleGrid>
+                <Heading
+                  size="sm"
+                  mb={4}
+                  display="flex"
+                  alignItems="center"
+                  gap={2}
+                  color="fg.default"
+                >
+                  <Icon as={FiUser} color="brand.500" /> Contact Principal
+                </Heading>
 
-          <SimpleGrid columns={{ base: 1, md: 2 }} gap={6} mt={6}>
-            <FieldGroup label="Spécificités secteur">
-              <Textarea
-                rows={3}
-                value={formState.sector_specification}
-                onChange={(event) =>
-                  handleChange("sector_specification", event.target.value)
-                }
-              />
-            </FieldGroup>
-            <FieldGroup label="Logo (URL)">
-              <Input
-                value={formState.logo_url}
-                onChange={(event) =>
-                  handleChange("logo_url", event.target.value)
-                }
-                placeholder="https://..."
-              />
-            </FieldGroup>
-          </SimpleGrid>
+                <Stack gap={4}>
+                  <Field label="Représentant Légal" readOnly={!isEditing}>
+                    <Input
+                      {...register("legal_representative_name")}
+                      variant={isEditing ? "outline" : "flushed"}
+                      color="fg.default"
+                    />
+                  </Field>
+                  <Field label="Téléphone" readOnly={!isEditing}>
+                    <Input
+                      {...register("legal_representative_contact")}
+                      variant={isEditing ? "outline" : "flushed"}
+                      color="fg.default"
+                    />
+                  </Field>
+                </Stack>
+              </CardBody>
+            </CardRoot>
+          </Stack>
 
-          <Button
-            colorScheme="purple"
-            mt={8}
-            w={{ base: "full", md: "auto" }}
-            onClick={handleSubmit}
-            disabled={!isFormValid}
-            loading={isSubmitting}
-          >
-            {company ? "Enregistrer les modifications" : "Créer le profil"}
-          </Button>
-        </CardBody>
-      </CardRoot>
+          {/* Main Info */}
+          <Stack flex="2" gap={6}>
+            <CardRoot variant="elevated" borderRadius="xl" bg="bg.panel">
+              <CardHeader>
+                <Heading
+                  size="md"
+                  display="flex"
+                  alignItems="center"
+                  gap={2}
+                  color="fg.default"
+                >
+                  <Icon as={FiShield} color="brand.500" /> Informations Légales
+                </Heading>
+              </CardHeader>
+              <CardBody>
+                <SimpleGrid columns={{ base: 1, md: 2 }} gap={6}>
+                  <Field label="Numéro NIS" readOnly={!isEditing} required>
+                    <Input
+                      value={company.nis ?? ""}
+                      readOnly
+                      variant="flushed"
+                      fontFamily="mono"
+                    />
+                  </Field>
+                  <Field label="Numéro NIF" readOnly={!isEditing} required>
+                    <Input
+                      value={company.nif ?? ""}
+                      readOnly
+                      variant="flushed"
+                      fontFamily="mono"
+                    />
+                  </Field>
+                  <Box gridColumn={{ base: "auto", md: "1 / -1" }}>
+                    <Field label="Adresse du Siège" readOnly={!isEditing}>
+                      <HStack align="start" w="full">
+                        {isEditing && (
+                          <Icon as={FiMapPin} mt={2} color="gray.400" />
+                        )}
+                        <Textarea
+                          {...register("headquarters_address", {
+                            required: "Requis",
+                          })}
+                          variant={isEditing ? "outline" : "flushed"}
+                          minH="80px"
+                          resize="none"
+                        />
+                      </HStack>
+                    </Field>
+                  </Box>
+                </SimpleGrid>
+              </CardBody>
+            </CardRoot>
+
+            <CardRoot variant="elevated" borderRadius="xl" bg="bg.panel">
+              <CardHeader>
+                <Heading
+                  size="md"
+                  display="flex"
+                  alignItems="center"
+                  gap={2}
+                  color="fg.default"
+                >
+                  <Icon as={FiBriefcase} color="brand.500" /> Activité &
+                  Opérations
+                </Heading>
+              </CardHeader>
+              <CardBody>
+                <SimpleGrid columns={{ base: 1, md: 2 }} gap={6}>
+                  <Field label="Type d'entreprise" readOnly={!isEditing}>
+                    {isEditing ? (
+                      <select
+                        {...register("company_type")}
+                        style={{
+                          width: "100%",
+                          padding: "10px",
+                          borderRadius: "6px",
+                          border: "1px solid #E2E8F0",
+                          background: "transparent",
+                        }}
+                      >
+                        {COMPANY_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        value={
+                          COMPANY_TYPE_OPTIONS.find(
+                            (o) => o.value === company.company_type
+                          )?.label
+                        }
+                        readOnly
+                        variant="flushed"
+                      />
+                    )}
+                  </Field>
+                  <Field label="Type de Partenaire" readOnly={!isEditing}>
+                    {isEditing ? (
+                      <select
+                        {...register("partner_type")}
+                        style={{
+                          width: "100%",
+                          padding: "10px",
+                          borderRadius: "6px",
+                          border: "1px solid #E2E8F0",
+                          background: "transparent",
+                        }}
+                      >
+                        {PARTNER_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        value={
+                          PARTNER_TYPE_OPTIONS.find(
+                            (o) => o.value === company.partner_type
+                          )?.label
+                        }
+                        readOnly
+                        variant="flushed"
+                      />
+                    )}
+                  </Field>
+                  <Field label="Secteur d'activité" readOnly={!isEditing}>
+                    {isEditing ? (
+                      <select
+                        {...register("activity_sector")}
+                        style={{
+                          width: "100%",
+                          padding: "10px",
+                          borderRadius: "6px",
+                          border: "1px solid #E2E8F0",
+                          background: "transparent",
+                        }}
+                      >
+                        {ACTIVITY_SECTOR_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        value={
+                          ACTIVITY_SECTOR_OPTIONS.find(
+                            (o) => o.value === company.activity_sector
+                          )?.label
+                        }
+                        readOnly
+                        variant="flushed"
+                      />
+                    )}
+                  </Field>
+                  <Field label="Spécificité (Optionnel)" readOnly={!isEditing}>
+                    <Input
+                      {...register("sector_specification")}
+                      placeholder="Ex: Transport de produits frais"
+                      variant={isEditing ? "outline" : "flushed"}
+                    />
+                  </Field>
+                </SimpleGrid>
+              </CardBody>
+            </CardRoot>
+
+            {isEditing && (
+              <Flex justify="end" gap={4} py={4}>
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  onClick={() => {
+                    reset(company);
+                    setIsEditing(false);
+                  }}
+                >
+                  <FiX /> Annuler
+                </Button>
+                <Button
+                  type="submit"
+                  colorPalette="brand"
+                  size="lg"
+                  loading={isSubmitting || mutation.isPending}
+                >
+                  <FiSave /> Enregistrer les modifications
+                </Button>
+              </Flex>
+            )}
+          </Stack>
+        </Flex>
+      </form>
     </Container>
-  )
-}
+  );
+};
 
-interface InfoTileProps {
-  icon: IconType
-  label: string
-  value: string
-}
-
-const InfoTile = ({ icon: Icon, label, value }: InfoTileProps) => (
-  <Stack gap={1} borderWidth="1px" borderRadius="lg" p={4}>
-    <Flex align="center" gap={2} color="gray.600">
-      <Icon />
-      <Text fontSize="sm">{label}</Text>
+const ProfileSkeleton = () => (
+  <Container maxW="container.xl" py={8}>
+    <Box
+      h="200px"
+      bg="bg.subtle"
+      borderRadius="2xl"
+      mb={16}
+      position="relative"
+    >
+      <Box position="absolute" bottom="-50px" left="40px">
+        <SkeletonCircle size="32" />
+      </Box>
+    </Box>
+    <Flex gap={8}>
+      <Stack flex="1">
+        <SkeletonText noOfLines={5} gap={4} />
+      </Stack>
+      <Stack flex="2">
+        <SkeletonText noOfLines={8} gap={4} />
+      </Stack>
     </Flex>
-    <Text fontWeight="semibold">{value}</Text>
-  </Stack>
-)
+  </Container>
+);
 
-export default CompanyProfile
+export default CompanyProfile;

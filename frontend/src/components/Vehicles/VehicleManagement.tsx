@@ -5,110 +5,61 @@ import {
   CardBody,
   CardRoot,
   Container,
-  chakra,
-  DialogBackdrop,
+  Flex,
+  Heading,
+  Icon,
+  IconButton,
+  Input,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  VStack,
+} from "@chakra-ui/react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
+import { useForm } from "react-hook-form"
+import {
+  FiAlertCircle,
+  FiCheckCircle,
+  FiEdit2,
+  FiPlus,
+  FiSearch,
+  FiTrash2,
+  FiTruck,
+} from "react-icons/fi"
+
+import {
+  type ApiError,
+  type VehicleCreate,
+  type VehiclePublic,
+  type VehicleUpdate,
+  VehiclesService,
+} from "@/client"
+import {
+  DialogActionTrigger,
   DialogBody,
   DialogCloseTrigger,
   DialogContent,
   DialogFooter,
   DialogHeader,
-  DialogPositioner,
   DialogRoot,
   DialogTitle,
-  Flex,
-  Heading,
-  IconButton,
-  Input,
-  InputGroup,
+} from "@/components/ui/dialog"
+import { Field } from "@/components/ui/field"
+import { InputGroup } from "@/components/ui/input-group"
+import {
   MenuContent,
   MenuItem,
   MenuRoot,
   MenuTrigger,
-  SimpleGrid,
-  Stack,
-  type StackProps,
-  TableBody,
-  TableCell,
-  TableColumnHeader,
-  TableHeader,
-  TableRoot,
-  TableRow,
-  Text,
-  useDisclosure,
-} from "@chakra-ui/react";
-import {
-  type ChangeEvent,
-  type ComponentType,
-  type ReactNode,
-  useMemo,
-  useState,
-} from "react";
-import {
-  FiAlertCircle,
-  FiCheckCircle,
-  FiEdit2,
-  FiMoreVertical,
-  FiPlus,
-  FiSearch,
-  FiTrash2,
-  FiTruck,
-  FiX,
-} from "react-icons/fi";
-import type { VehicleCreate, VehicleUpdate } from "@/client";
-import { VehiclesService } from "@/client";
-import { toaster } from "@/components/ui/toaster";
+} from "@/components/ui/menu"
+import { SkeletonText } from "@/components/ui/skeleton"
+import { Toaster, toaster } from "@/components/ui/toaster"
+import { handleError } from "@/utils"
+import { useCompany } from "@/hooks/useCompany" // <--- 1. Import Hook
 
-const StyledSelect = chakra("select");
-
-type FieldGroupProps = {
-  label: string;
-  helper?: string;
-  required?: boolean;
-  labelFor?: string;
-  children: ReactNode;
-} & StackProps;
-
-const FieldGroup = ({
-  label,
-  helper,
-  required,
-  labelFor,
-  children,
-  ...stackProps
-}: FieldGroupProps) => (
-  <Stack gap={1} {...stackProps}>
-    <chakra.label fontSize="sm" fontWeight="semibold" htmlFor={labelFor}>
-      {label}
-      {required && (
-        <Text as="span" color="red.500" ml={1}>
-          *
-        </Text>
-      )}
-    </chakra.label>
-    {children}
-    {helper && (
-      <Text fontSize="sm" color="gray.500">
-        {helper}
-      </Text>
-    )}
-  </Stack>
-);
-
-const SELECT_BASE_PROPS = {
-  borderWidth: "1px",
-  borderColor: "gray.200",
-  borderRadius: "md",
-  bg: "white",
-  px: 3,
-  py: 2,
-  _focusVisible: {
-    outline: "2px solid",
-    outlineColor: "purple.500",
-  },
-};
-
-type VehicleStatus = "disponible" | "en_mission" | "maintenance" | "inactif";
-
+// --- Configuration & Helpers ---
 const vehicleCategories = {
   ag1_camion_frigorifique: "Camion Frigorifique",
   ag2_camion_refrigere: "Camion Réfrigéré",
@@ -117,687 +68,372 @@ const vehicleCategories = {
   in1_camion_bache: "Camion Bâché",
   in3_camion_grue: "Camion-Grue",
   ch1_camion_citerne: "Camion-Citerne",
-} as const;
+} as const
 
-type VehicleCategoryKey = keyof typeof vehicleCategories;
-
-interface Vehicle {
-  id: string;
-  license_plate: string;
-  category: VehicleCategoryKey;
-  capacity_tons: number;
-  status: VehicleStatus;
-  current_km: number;
-  brand: string;
-  model: string;
-  year: number;
-}
-
-interface VehicleFormState {
-  license_plate: string;
-  category: VehicleCategoryKey;
-  capacity_tons: string;
-  status: VehicleStatus;
-  brand: string;
-  model: string;
-  year: string;
-}
-
-type ValidationErrors = Partial<Record<keyof VehicleFormState, string>>;
-
-const statusConfig: Record<
-  VehicleStatus,
-  { label: string; color: string; icon: ComponentType }
-> = {
+const statusConfig = {
   disponible: { label: "Disponible", color: "green", icon: FiCheckCircle },
   en_mission: { label: "En Mission", color: "blue", icon: FiTruck },
   maintenance: { label: "Maintenance", color: "orange", icon: FiAlertCircle },
   inactif: { label: "Inactif", color: "red", icon: FiAlertCircle },
-};
-
-const INITIAL_FORM: VehicleFormState = {
-  license_plate: "",
-  category: "ag1_camion_frigorifique",
-  capacity_tons: "",
-  status: "disponible",
-  brand: "",
-  model: "",
-  year: String(new Date().getFullYear()),
-};
+}
 
 const VehicleManagementPage = () => {
-  const { open, onOpen, onClose } = useDisclosure();
-  const [vehicles, setVehicles] = useState<Vehicle[]>([
-    {
-      id: "1",
-      license_plate: "16-12345-ORN",
-      category: "ag1_camion_frigorifique",
-      capacity_tons: 12,
-      status: "disponible",
-      current_km: 45000,
-      brand: "Mercedes",
-      model: "Actros",
-      year: 2020,
+  const queryClient = useQueryClient()
+  const { company } = useCompany() // <--- 2. Get company
+  const [searchTerm, setSearchTerm] = useState("")
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingVehicle, setEditingVehicle] = useState<VehiclePublic | null>(null)
+
+  // --- API Hooks ---
+  const { data, isLoading } = useQuery({
+    queryKey: ["vehicles"],
+    queryFn: () => VehiclesService.readVehicles({ limit: 100 }),
+    enabled: !!company, // <--- 3. Prevent fetch if no company (Fixes 404)
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (data: VehicleCreate) =>
+      VehiclesService.createVehicle({ requestBody: data }),
+    onSuccess: () => {
+      toaster.success({ title: "Véhicule ajouté avec succès" })
+      closeModal()
     },
-    {
-      id: "2",
-      license_plate: "31-67890-CST",
-      category: "bt1_camion_benne",
-      capacity_tons: 18,
-      status: "en_mission",
-      current_km: 78000,
-      brand: "Volvo",
-      model: "FH16",
-      year: 2019,
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["vehicles"] }),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: VehicleUpdate }) =>
+      VehiclesService.updateVehicle({ vehicleId: id, requestBody: data }),
+    onSuccess: () => {
+      toaster.success({ title: "Véhicule mis à jour" })
+      closeModal()
     },
-    {
-      id: "3",
-      license_plate: "16-54321-ORN",
-      category: "in1_camion_bache",
-      capacity_tons: 10,
-      status: "disponible",
-      current_km: 32000,
-      brand: "Renault",
-      model: "T High",
-      year: 2021,
-    },
-  ]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | VehicleStatus>(
-    "all"
-  );
-  const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
-  const [formData, setFormData] = useState<VehicleFormState>(INITIAL_FORM);
-  const [errors, setErrors] = useState<ValidationErrors>({});
-  const formBaseId = "vehicle-form";
-  const fieldIds = {
-    license: `${formBaseId}-license`,
-    category: `${formBaseId}-category`,
-    capacity: `${formBaseId}-capacity`,
-    status: `${formBaseId}-status`,
-    brand: `${formBaseId}-brand`,
-    model: `${formBaseId}-model`,
-    year: `${formBaseId}-year`,
-  };
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["vehicles"] }),
+  })
 
-  const filteredVehicles = useMemo(() => {
-    return vehicles.filter((vehicle) => {
-      const match = searchTerm.toLowerCase();
-      const matchesSearch =
-        vehicle.license_plate.toLowerCase().includes(match) ||
-        vehicle.brand.toLowerCase().includes(match);
-      const matchesStatus =
-        filterStatus === "all" || vehicle.status === filterStatus;
-      return matchesSearch && matchesStatus;
-    });
-  }, [vehicles, searchTerm, filterStatus]);
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => VehiclesService.deleteVehicle({ vehicleId: id }),
+    onSuccess: () => toaster.success({ title: "Véhicule supprimé" }),
+    onError: (err: ApiError) => handleError(err),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["vehicles"] }),
+  })
 
-  const stats = useMemo(
-    () => ({
-      total: vehicles.length,
-      available: vehicles.filter((v) => v.status === "disponible").length,
-      in_mission: vehicles.filter((v) => v.status === "en_mission").length,
-      maintenance: vehicles.filter((v) => v.status === "maintenance").length,
-    }),
-    [vehicles]
-  );
+  // --- Form Handling ---
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<VehicleCreate>()
 
-  const resetForm = () => {
-    setEditingVehicle(null);
-    setFormData(INITIAL_FORM);
-    setErrors({});
-  };
-
-  const updateField = <Key extends keyof VehicleFormState>(
-    key: Key,
-    value: VehicleFormState[Key]
-  ) => {
-    // Clear error for this field when user starts typing
-    setErrors((prev) => {
-      const newErrors = { ...prev };
-      delete newErrors[key];
-      return newErrors;
-    });
-
-    setFormData((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-  };
-
-  const validateForm = (): boolean => {
-    const newErrors: ValidationErrors = {};
-
-    // License plate validation (Algerian format: NNNNN-DDD-DD)
-    if (!formData.license_plate.trim()) {
-      newErrors.license_plate = "Veuillez saisir le matricule du véhicule";
-    } else if (!/^\d{5}-\d{3}-\d{2}$/.test(formData.license_plate.trim())) {
-      newErrors.license_plate =
-        "Format attendu: *****-***-** (ex: 12345-678-90)";
+  const openModal = (vehicle?: VehiclePublic) => {
+    if (vehicle) {
+      setEditingVehicle(vehicle)
+      reset({
+        ...vehicle,
+        year: vehicle.year || new Date().getFullYear(),
+      } as any)
+    } else {
+      setEditingVehicle(null)
+      reset({
+        status: "disponible",
+        category: "ag1_camion_frigorifique",
+        year: new Date().getFullYear(),
+      })
     }
+    setIsModalOpen(true)
+  }
 
-    // Capacity validation
-    const capacity = Number(formData.capacity_tons);
-    if (!formData.capacity_tons.trim()) {
-      newErrors.capacity_tons = "Veuillez saisir la capacité du véhicule";
-    } else if (Number.isNaN(capacity) || capacity <= 0) {
-      newErrors.capacity_tons = "La capacité doit être un nombre positif";
-    } else if (capacity > 100) {
-      newErrors.capacity_tons = "La capacité ne peut pas dépasser 100 tonnes";
+  const closeModal = () => {
+    setIsModalOpen(false)
+    setEditingVehicle(null)
+    reset()
+  }
+
+  const onSubmit = (data: VehicleCreate) => {
+    if (editingVehicle) {
+      updateMutation.mutate({ id: editingVehicle.id, data: data as VehicleUpdate })
+    } else {
+      createMutation.mutate(data)
     }
+  }
 
-    // Brand validation (optional but if provided, validate)
-    if (formData.brand.trim() && formData.brand.trim().length < 2) {
-      newErrors.brand =
-        "Le nom de la marque doit contenir au moins 2 caractères";
-    }
+  // --- Statistics ---
+  const vehicles = data?.data || []
+  const filteredVehicles = vehicles.filter((v) =>
+    v.license_plate.toLowerCase().includes(searchTerm.toLowerCase()),
+  )
 
-    // Model validation (optional but if provided, validate)
-    if (formData.model.trim() && formData.model.trim().length < 2) {
-      newErrors.model = "Le nom du modèle doit contenir au moins 2 caractères";
-    }
-
-    // Year validation
-    const year = Number(formData.year);
-    const currentYear = new Date().getFullYear();
-    if (!formData.year.trim()) {
-      newErrors.year = "Veuillez saisir l'année du véhicule";
-    } else if (Number.isNaN(year) || year < 1900) {
-      newErrors.year = "L'année doit être supérieure à 1900";
-    } else if (year > currentYear + 1) {
-      newErrors.year = `L'année ne peut pas dépasser ${currentYear + 1}`;
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-  const handleClose = () => {
-    resetForm();
-    onClose();
-  };
-
-  const handleSubmit = async () => {
-    if (!validateForm()) {
-      toaster.error({
-        title: "Erreur de saisie",
-        description: "Veuillez corriger les erreurs dans le formulaire",
-        meta: { closable: true, color: "red.solid" },
-      });
-      return;
-    }
-
-    const normalizedData = {
-      ...formData,
-      capacity_tons: Number(formData.capacity_tons) || 0,
-      year: Number(formData.year) || new Date().getFullYear(),
-    };
-
-    try {
-      if (editingVehicle) {
-        // Update existing vehicle
-        await VehiclesService.updateVehicle({
-          vehicleId: editingVehicle.id,
-          requestBody: normalizedData as VehicleUpdate,
-        });
-        setVehicles((prev) =>
-          prev.map((vehicle) =>
-            vehicle.id === editingVehicle.id
-              ? { ...vehicle, ...normalizedData }
-              : vehicle
-          )
-        );
-        toaster.success({
-          title: "Véhicule mis à jour",
-          description: "Les informations ont été enregistrées",
-          meta: { closable: true, color: "purple.solid" },
-        });
-      } else {
-        // Create new vehicle
-        const createdVehicle = await VehiclesService.createVehicle({
-          requestBody: normalizedData as VehicleCreate,
-        });
-        // Cast to Vehicle type for local state
-        setVehicles((prev) => [...prev, createdVehicle as unknown as Vehicle]);
-        toaster.success({
-          title: "Véhicule ajouté",
-          description: "La flotte a été mise à jour",
-          meta: { closable: true, color: "purple.solid" },
-        });
-      }
-      handleClose();
-    } catch (error: any) {
-      const errorMsg =
-        error?.response?.body?.detail ||
-        error?.message ||
-        "Une erreur est survenue";
-      toaster.error({
-        title: "Erreur lors de l'enregistrement",
-        description: String(errorMsg),
-        meta: { closable: true, color: "red.solid" },
-      });
-    }
-  };
-
-  const handleEdit = (vehicle: Vehicle) => {
-    setEditingVehicle(vehicle);
-    setFormData({
-      license_plate: vehicle.license_plate,
-      category: vehicle.category,
-      capacity_tons: String(vehicle.capacity_tons),
-      status: vehicle.status,
-      brand: vehicle.brand,
-      model: vehicle.model,
-      year: String(vehicle.year),
-    });
-    onOpen();
-  };
-
-  const handleDelete = async (vehicleId: string) => {
-    try {
-      await VehiclesService.deleteVehicle({ vehicleId });
-      setVehicles((prev) => prev.filter((vehicle) => vehicle.id !== vehicleId));
-      toaster.success({
-        title: "Véhicule supprimé",
-        description: "Le véhicule a été retiré de la flotte",
-        meta: { closable: true, color: "purple.solid" },
-      });
-    } catch (error: any) {
-      const errorMsg =
-        error?.response?.body?.detail ||
-        error?.message ||
-        "Impossible de supprimer le véhicule";
-      toaster.error({
-        title: "Erreur lors de la suppression",
-        description: String(errorMsg),
-        meta: { closable: true, color: "red.solid" },
-      });
-    }
-  };
+  const stats = {
+    total: vehicles.length,
+    available: vehicles.filter((v) => v.status === "disponible").length,
+    in_mission: vehicles.filter((v) => v.status === "en_mission").length,
+    maintenance: vehicles.filter((v) => v.status === "maintenance").length,
+  }
 
   return (
-    <Container maxW="full" py={8} px={6}>
-      <Flex justifyContent="space-between" alignItems="center" mb={8}>
+    <Container maxW="full" py={8} px={{ base: 4, md: 8 }}>
+      <Toaster />
+      
+      {/* Header */}
+      <Flex
+        justify="space-between"
+        align={{ base: "start", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={4}
+        mb={8}
+      >
         <Box>
           <Heading
-            size="xl"
+            size="2xl"
             mb={2}
-            bgGradient="linear(to-r, purple.400, pink.500)"
+            bgGradient="linear(to-r, brand.700, brand.500)"
             bgClip="text"
+            letterSpacing="tight"
           >
-            Gestion des Véhicules
+            Flotte de Véhicules
           </Heading>
-          <Text color="gray.600">Gérez votre flotte de véhicules</Text>
+          <Text color="gray.500" fontSize="lg">
+            Gérez et suivez l'état de vos camions en temps réel.
+          </Text>
         </Box>
         <Button
-          colorScheme="purple"
+          colorPalette="brand"
           size="lg"
-          onClick={onOpen}
-          borderRadius="xl"
+          onClick={() => openModal()}
+          boxShadow="md"
         >
-          <Flex align="center" gap={2}>
-            <FiPlus />
-            Ajouter un Véhicule
-          </Flex>
+          <FiPlus /> Ajouter un Véhicule
         </Button>
       </Flex>
 
-      <SimpleGrid columns={{ base: 1, md: 4 }} gap={6} mb={8}>
-        <StatCard label="Total Flotte" value={stats.total} color="purple.500" />
-        <StatCard
-          label="Disponibles"
-          value={stats.available}
-          color="green.500"
-        />
-        <StatCard
-          label="En Mission"
-          value={stats.in_mission}
-          color="blue.500"
-        />
-        <StatCard
-          label="Maintenance"
-          value={stats.maintenance}
-          color="orange.500"
-        />
+      {/* Stats Cards */}
+      <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={6} mb={8}>
+        <StatCard label="Total Flotte" value={stats.total} color="brand.600" />
+        <StatCard label="Disponibles" value={stats.available} color="green.600" />
+        <StatCard label="En Mission" value={stats.in_mission} color="blue.600" />
+        <StatCard label="Maintenance" value={stats.maintenance} color="orange.600" />
       </SimpleGrid>
 
-      <CardRoot variant="elevated" borderRadius="xl" mb={6}>
-        <CardBody>
-          <Flex gap={4} flexWrap="wrap">
+      {/* Search & Table */}
+      <CardRoot variant="elevated" borderRadius="xl" overflow="hidden" boxShadow="sm">
+        <CardBody p={6}>
+          <Flex mb={6} justify="space-between" wrap="wrap" gap={4}>
             <InputGroup
-              flex={1}
-              minW="250px"
-              startElement={<FiSearch color="gray.500" />}
-              startElementProps={{ pointerEvents: "none" }}
+              flex="1"
+              maxW="md"
+              startElement={<FiSearch color="gray.400" />}
             >
               <Input
-                placeholder="Rechercher par matricule ou marque..."
+                placeholder="Rechercher par matricule..."
                 value={searchTerm}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  setSearchTerm(event.target.value)
-                }
+                onChange={(e) => setSearchTerm(e.target.value)}
+                borderRadius="lg"
               />
             </InputGroup>
-            <StyledSelect
-              maxW="200px"
-              value={filterStatus}
-              onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                setFilterStatus(event.target.value as VehicleStatus | "all")
-              }
-              {...SELECT_BASE_PROPS}
-            >
-              <option value="all">Tous les statuts</option>
-              <option value="disponible">Disponible</option>
-              <option value="en_mission">En Mission</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="inactif">Inactif</option>
-            </StyledSelect>
           </Flex>
-        </CardBody>
-      </CardRoot>
 
-      <CardRoot variant="elevated" borderRadius="xl">
-        <CardBody p={0}>
           <Box overflowX="auto">
-            <TableRoot>
-              <TableHeader bg="gray.50">
-                <TableRow>
-                  <TableColumnHeader>Matricule</TableColumnHeader>
-                  <TableColumnHeader>Catégorie</TableColumnHeader>
-                  <TableColumnHeader>Capacité</TableColumnHeader>
-                  <TableColumnHeader>Marque/Modèle</TableColumnHeader>
-                  <TableColumnHeader>Kilométrage</TableColumnHeader>
-                  <TableColumnHeader>Statut</TableColumnHeader>
-                  <TableColumnHeader textAlign="right">
-                    Actions
-                  </TableColumnHeader>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredVehicles.map((vehicle) => {
-                  const statusInfo = statusConfig[vehicle.status];
-                  const StatusIcon = statusInfo.icon;
-                  return (
-                    <TableRow key={vehicle.id} _hover={{ bg: "gray.50" }}>
-                      <TableCell fontWeight="medium">
-                        {vehicle.license_plate}
-                      </TableCell>
-                      <TableCell>
-                        <Text fontSize="sm">
-                          {vehicleCategories[vehicle.category]}
-                        </Text>
-                      </TableCell>
-                      <TableCell>{vehicle.capacity_tons} T</TableCell>
-                      <TableCell>
-                        <Text fontSize="sm">
-                          {vehicle.brand} {vehicle.model}
-                        </Text>
-                        <Text fontSize="xs" color="gray.500">
-                          {vehicle.year}
-                        </Text>
-                      </TableCell>
-                      <TableCell>
-                        {vehicle.current_km.toLocaleString()} km
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          colorScheme={statusInfo.color}
-                          display="flex"
-                          alignItems="center"
-                          gap={1}
-                          w="fit-content"
-                        >
-                          <StatusIcon />
-                          {statusInfo.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell textAlign="right">
-                        <MenuRoot>
-                          <MenuTrigger asChild>
-                            <chakra.button
-                              aria-label="Ouvrir les actions"
-                              bg="transparent"
-                              _hover={{ bg: "gray.100" }}
-                              p={2}
-                              borderRadius="md"
-                              cursor="pointer"
-                              display="inline-flex"
-                              alignItems="center"
-                              justifyContent="center"
-                            >
-                              <FiMoreVertical />
-                            </chakra.button>
-                          </MenuTrigger>
-                          <MenuContent minW="150px">
-                            <MenuItem
-                              value={`edit-${vehicle.id}`}
-                              onClick={() => handleEdit(vehicle)}
-                            >
-                              <Flex align="center" gap={2}>
-                                <FiEdit2 />
-                                Modifier
-                              </Flex>
-                            </MenuItem>
-                            <MenuItem
-                              value={`delete-${vehicle.id}`}
-                              color="red.500"
-                              onClick={() => handleDelete(vehicle.id)}
-                            >
-                              <Flex align="center" gap={2}>
-                                <FiTrash2 />
-                                Supprimer
-                              </Flex>
-                            </MenuItem>
-                          </MenuContent>
-                        </MenuRoot>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </TableRoot>
+            <Table.Root interactive size="lg">
+              <Table.Header bg="gray.50">
+                <Table.Row>
+                  <Table.ColumnHeader>Matricule</Table.ColumnHeader>
+                  <Table.ColumnHeader>Détails</Table.ColumnHeader>
+                  <Table.ColumnHeader>Capacité</Table.ColumnHeader>
+                  <Table.ColumnHeader>Statut</Table.ColumnHeader>
+                  <Table.ColumnHeader textAlign="right">Actions</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {isLoading ? (
+                  [...Array(3)].map((_, i) => (
+                    <Table.Row key={i}>
+                      <Table.Cell colSpan={5}>
+                        <SkeletonText noOfLines={1} />
+                      </Table.Cell>
+                    </Table.Row>
+                  ))
+                ) : filteredVehicles.length === 0 ? (
+                  <Table.Row>
+                    <Table.Cell colSpan={5} textAlign="center" py={8} color="gray.500">
+                      {company ? "Aucun véhicule trouvé." : "Veuillez d'abord configurer votre entreprise."}
+                    </Table.Cell>
+                  </Table.Row>
+                ) : (
+                  filteredVehicles.map((vehicle) => {
+                    const status = statusConfig[vehicle.status as keyof typeof statusConfig]
+                    return (
+                      <Table.Row key={vehicle.id} transition="background 0.2s">
+                        <Table.Cell fontWeight="bold" color="brand.700">
+                          {vehicle.license_plate}
+                        </Table.Cell>
+                        <Table.Cell>
+                          <VStack align="start" gap={0}>
+                            <Text fontWeight="medium">
+                              {vehicleCategories[vehicle.category as keyof typeof vehicleCategories]}
+                            </Text>
+                            <Text fontSize="xs" color="gray.500">
+                              {vehicle.brand} {vehicle.model} ({vehicle.year})
+                            </Text>
+                          </VStack>
+                        </Table.Cell>
+                        <Table.Cell>{vehicle.capacity_tons} T</Table.Cell>
+                        <Table.Cell>
+                          <Badge
+                            colorPalette={status.color}
+                            variant="subtle"
+                            px={2}
+                            py={1}
+                            borderRadius="full"
+                          >
+                            <Flex align="center" gap={1}>
+                              <Icon as={status.icon} /> {status.label}
+                            </Flex>
+                          </Badge>
+                        </Table.Cell>
+                        <Table.Cell textAlign="right">
+                          <MenuRoot>
+                            <MenuTrigger asChild>
+                              <IconButton variant="ghost" size="sm" aria-label="Actions">
+                                <Box as="span">•••</Box>
+                              </IconButton>
+                            </MenuTrigger>
+                            <MenuContent>
+                              <MenuItem onClick={() => openModal(vehicle)} value="edit">
+                                <FiEdit2 /> Modifier
+                              </MenuItem>
+                              <MenuItem
+                                onClick={() => {
+                                  if (confirm("Supprimer ce véhicule ?"))
+                                    deleteMutation.mutate(vehicle.id)
+                                }}
+                                color="red.500"
+                                value="delete"
+                              >
+                                <FiTrash2 /> Supprimer
+                              </MenuItem>
+                            </MenuContent>
+                          </MenuRoot>
+                        </Table.Cell>
+                      </Table.Row>
+                    )
+                  })
+                )}
+              </Table.Body>
+            </Table.Root>
           </Box>
         </CardBody>
       </CardRoot>
 
-      <DialogRoot
-        open={open}
-        onOpenChange={({ open }) => {
-          if (!open) {
-            handleClose();
-          }
-        }}
-      >
-        <DialogBackdrop />
-        <DialogPositioner>
-          <DialogContent
-            borderRadius="xl"
-            maxW="3xl"
-            w="full"
-            px={{ base: 4, md: 6 }}
-            py={6}
-          >
-            <DialogHeader
-              display="flex"
-              alignItems="center"
-              justifyContent="space-between"
-              gap={3}
-              px={0}
-              pb={3}
-            >
-              <DialogTitle fontSize="lg" fontWeight="semibold" color="gray.900">
-                {editingVehicle
-                  ? "Modifier le Véhicule"
-                  : "Ajouter un Véhicule"}
-              </DialogTitle>
-              <DialogCloseTrigger asChild>
-                <IconButton aria-label="Fermer" variant="ghost" size="sm">
-                  <FiX />
-                </IconButton>
-              </DialogCloseTrigger>
-            </DialogHeader>
-            <DialogBody px={0} pb={6}>
-              <SimpleGrid columns={{ base: 1, md: 2 }} gap={4}>
-                <FieldGroup
-                  label="Matricule"
-                  labelFor={fieldIds.license}
-                  required
-                >
-                  <Input
-                    id={fieldIds.license}
-                    value={formData.license_plate}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateField(
-                        "license_plate",
-                        event.target.value.toUpperCase()
-                      )
-                    }
-                    placeholder="*****-***-**"
-                    _invalid={errors.license_plate ? {} : undefined}
-                  />
-                  {errors.license_plate && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.license_plate}
-                    </Text>
-                  )}
-                </FieldGroup>
-                <FieldGroup
-                  label="Catégorie"
-                  labelFor={fieldIds.category}
-                  required
-                >
-                  <StyledSelect
-                    id={fieldIds.category}
-                    value={formData.category}
-                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        category: event.target.value as VehicleCategoryKey,
-                      }))
-                    }
-                    {...SELECT_BASE_PROPS}
-                  >
-                    {Object.entries(vehicleCategories).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </StyledSelect>
-                </FieldGroup>
-                <FieldGroup
-                  label="Capacité (T)"
-                  labelFor={fieldIds.capacity}
-                  required
-                >
-                  <Input
-                    id={fieldIds.capacity}
-                    type="number"
-                    value={formData.capacity_tons}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateField("capacity_tons", event.target.value)
-                    }
-                    placeholder="Ex: 12"
-                    _invalid={errors.capacity_tons ? {} : undefined}
-                  />
-                  {errors.capacity_tons && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.capacity_tons}
-                    </Text>
-                  )}
-                </FieldGroup>
-                <FieldGroup label="Statut" labelFor={fieldIds.status} required>
-                  <StyledSelect
-                    id={fieldIds.status}
-                    value={formData.status}
-                    onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        status: event.target.value as VehicleStatus,
-                      }))
-                    }
-                    {...SELECT_BASE_PROPS}
-                  >
-                    <option value="disponible">Disponible</option>
-                    <option value="en_mission">En Mission</option>
-                    <option value="maintenance">Maintenance</option>
-                    <option value="inactif">Inactif</option>
-                  </StyledSelect>
-                </FieldGroup>
-                <FieldGroup label="Marque" labelFor={fieldIds.brand}>
-                  <Input
-                    id={fieldIds.brand}
-                    value={formData.brand}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateField("brand", event.target.value)
-                    }
-                    placeholder="Mercedes"
-                    _invalid={errors.brand ? {} : undefined}
-                  />
-                  {errors.brand && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.brand}
-                    </Text>
-                  )}
-                </FieldGroup>
-                <FieldGroup label="Modèle" labelFor={fieldIds.model}>
-                  <Input
-                    id={fieldIds.model}
-                    value={formData.model}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateField("model", event.target.value)
-                    }
-                    placeholder="Actros"
-                    _invalid={errors.model ? {} : undefined}
-                  />
-                  {errors.model && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.model}
-                    </Text>
-                  )}
-                </FieldGroup>
-                <FieldGroup label="Année" labelFor={fieldIds.year}>
-                  <Input
-                    id={fieldIds.year}
-                    type="number"
-                    value={formData.year}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      updateField("year", event.target.value)
-                    }
-                    placeholder="2021"
-                    _invalid={errors.year ? {} : undefined}
-                  />
-                  {errors.year && (
-                    <Text color="red.500" fontSize="sm" mt={1}>
-                      {errors.year}
-                    </Text>
-                  )}
-                </FieldGroup>
+      {/* Add/Edit Modal */}
+      <DialogRoot open={isModalOpen} onOpenChange={(e) => !e.open && closeModal()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingVehicle ? "Modifier le Véhicule" : "Nouveau Véhicule"}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <Stack gap={4} as="form" id="vehicle-form" onSubmit={handleSubmit(onSubmit)}>
+              <Field
+                label="Matricule"
+                invalid={!!errors.license_plate}
+                errorText={errors.license_plate?.message}
+                required
+              >
+                <Input
+                  {...register("license_plate", { required: "Requis" })}
+                  placeholder="ex: 12345-116-16"
+                />
+              </Field>
+
+              <SimpleGrid columns={2} gap={4}>
+                <Field label="Marque" invalid={!!errors.brand}>
+                  <Input {...register("brand")} placeholder="Renault" />
+                </Field>
+                <Field label="Modèle" invalid={!!errors.model}>
+                  <Input {...register("model")} placeholder="K-Series" />
+                </Field>
               </SimpleGrid>
-            </DialogBody>
-            <DialogFooter px={0} gap={3} justifyContent="flex-end">
-              <Button variant="ghost" onClick={handleClose}>
+
+              <SimpleGrid columns={2} gap={4}>
+                <Field label="Capacité (T)" invalid={!!errors.capacity_tons} required>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    {...register("capacity_tons", { required: "Requis" })}
+                  />
+                </Field>
+                <Field label="Année" invalid={!!errors.year}>
+                  <Input type="number" {...register("year")} />
+                </Field>
+              </SimpleGrid>
+
+              <Field label="Catégorie" required>
+                <select
+                  {...register("category")}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    borderRadius: "6px",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  {Object.entries(vehicleCategories).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Statut" required>
+                <select
+                  {...register("status")}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    borderRadius: "6px",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  {Object.keys(statusConfig).map((s) => (
+                    <option key={s} value={s}>
+                      {statusConfig[s as keyof typeof statusConfig].label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </Stack>
+          </DialogBody>
+          <DialogFooter>
+            <DialogActionTrigger asChild>
+              <Button variant="ghost" onClick={closeModal}>
                 Annuler
               </Button>
-              <Button colorScheme="purple" onClick={handleSubmit}>
-                {editingVehicle ? "Mettre à jour" : "Ajouter"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </DialogPositioner>
+            </DialogActionTrigger>
+            <Button
+              form="vehicle-form"
+              type="submit"
+              loading={isSubmitting || createMutation.isPending || updateMutation.isPending}
+              colorPalette="brand"
+            >
+              Enregistrer
+            </Button>
+          </DialogFooter>
+          <DialogCloseTrigger />
+        </DialogContent>
       </DialogRoot>
     </Container>
-  );
-};
-
-interface StatCardProps {
-  label: string;
-  value: number;
-  color: string;
+  )
 }
 
-const StatCard = ({ label, value, color }: StatCardProps) => (
-  <CardRoot variant="elevated" borderRadius="xl">
+const StatCard = ({ label, value, color }: { label: string; value: number; color: string }) => (
+  <CardRoot borderRadius="xl" borderTop="4px solid" borderColor={color} boxShadow="sm">
     <CardBody>
-      <Text fontSize="sm" color="gray.600" mb={1}>
+      <Text fontSize="sm" color="gray.500" fontWeight="medium">
         {label}
       </Text>
       <Text fontSize="3xl" fontWeight="bold" color={color}>
@@ -805,6 +441,6 @@ const StatCard = ({ label, value, color }: StatCardProps) => (
       </Text>
     </CardBody>
   </CardRoot>
-);
+)
 
-export default VehicleManagementPage;
+export default VehicleManagementPage

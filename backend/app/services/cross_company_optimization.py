@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Dict, List, Any, Tuple, Optional
 from collections import defaultdict
 import asyncio
@@ -7,7 +7,7 @@ import asyncio
 from ortools.sat.python import cp_model
 from sqlmodel import Session, select
 
-from app.models.trip_models import Trip, OptimizationBatch, CompanyOptimizationResult
+from app.models.trip_models import Trip, OptimizationBatch, CompanyOptimizationResult, OptimizationBatchStatus
 from app.models.company_models import Company, Vehicle
 from app.services.valhalla_service import ValhallaService
 import logging
@@ -30,10 +30,10 @@ class CrossCompanyOptimizationService:
         # Create optimization batch
         batch = OptimizationBatch(
             batch_date=target_date,
-            status="processing",
+            status=OptimizationBatchStatus.PROCESSING,
             optimization_type="cross_company",
             total_trips=0,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(UTC)
         )
         session.add(batch)
         session.commit()
@@ -51,7 +51,7 @@ class CrossCompanyOptimizationService:
             logger.info(f"Found {len(vehicles)} available vehicles")
             
             if not trips or not vehicles:
-                batch.status = "completed"
+                batch.status = OptimizationBatchStatus.COMPLETED
                 batch.total_trips = 0
                 session.add(batch)
                 session.commit()
@@ -100,8 +100,9 @@ class CrossCompanyOptimizationService:
                     
                     # Track participating companies
                     for assignment in group_result["assignments"]:
-                        participating_companies.add(uuid.UUID(assignment["original_company"]))
-                        participating_companies.add(uuid.UUID(assignment["assigned_company"]))
+                        # Store as strings for JSON compatibility
+                        participating_companies.add(str(assignment["original_company"]))
+                        participating_companies.add(str(assignment["assigned_company"]))
                     
                     total_km_saved += group_result.get("km_saved", 0)
                     total_fuel_saved += group_result.get("fuel_saved", 0)
@@ -121,8 +122,8 @@ class CrossCompanyOptimizationService:
             logger.info(f"Calculated KPIs for {len(company_kpis)} companies")
             
             # Step 7: Update batch with results
-            batch.status = "completed"
-            batch.completed_at = datetime.utcnow()
+            batch.status = OptimizationBatchStatus.COMPLETED
+            batch.completed_at = datetime.now(UTC)
             batch.total_trips = len(updated_trips)
             batch.participating_companies = list(participating_companies)
             batch.total_companies = len(participating_companies)
@@ -153,7 +154,7 @@ class CrossCompanyOptimizationService:
             
         except Exception as e:
             logger.error(f"Cross-company optimization failed: {str(e)}")
-            batch.status = "failed"
+            batch.status = OptimizationBatchStatus.FAILED
             session.add(batch)
             session.commit()
             
@@ -171,7 +172,7 @@ class CrossCompanyOptimizationService:
             Trip.route_calculated == True,
             Trip.optimization_status == "pending"
         )
-        return session.exec(trip_stmt).all()
+        return list(session.exec(trip_stmt).all())
     
     async def _get_available_vehicles(self, session: Session, target_date: datetime) -> List[Vehicle]:
         """Get all available vehicles."""
@@ -179,7 +180,7 @@ class CrossCompanyOptimizationService:
             Vehicle.is_active == True,
             Vehicle.status == "disponible"
         )
-        return session.exec(vehicle_stmt).all()
+        return list(session.exec(vehicle_stmt).all())
     
     def _group_trips_by_compatibility(self, trips: List[Trip]) -> Dict[str, List[Trip]]:
         """Group trips by vehicle compatibility."""
@@ -212,7 +213,13 @@ class CrossCompanyOptimizationService:
         for trip in trips:
             # Get return distance from Valhalla if not already calculated
             return_distance = trip.return_distance_km
-            if not return_distance and trip.company.depot_lat and trip.company.depot_lng:
+            if (
+                not return_distance
+                and trip.arrival_lat is not None
+                and trip.arrival_lng is not None
+                and trip.company.depot_lat
+                and trip.company.depot_lng
+            ):
                 return_route = await self.valhalla.get_route(
                     start_lat=trip.arrival_lat,
                     start_lng=trip.arrival_lng,

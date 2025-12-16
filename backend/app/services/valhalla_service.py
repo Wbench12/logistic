@@ -4,6 +4,10 @@ import polyline as pl
 from datetime import datetime, timedelta
 import asyncio
 import math
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class ValhallaService:
     def __init__(self, base_url: str = "http://localhost:8002"):
@@ -21,11 +25,6 @@ class ValhallaService:
     ) -> Dict[str, Any]:
         """Get route from Valhalla with detailed information."""
         try:
-            # Convert datetime to ISO format for Valhalla
-            date_time_str = None
-            if departure_time:
-                date_time_str = departure_time.isoformat()
-            
             request_body = {
                 "locations": [
                     {"lat": start_lat, "lon": start_lng},
@@ -33,11 +32,13 @@ class ValhallaService:
                 ],
                 "costing": costing,
                 "directions_options": {"units": "kilometers"},
-                "date_time": {
-                    "type": departure_time and "departure" or "current",
-                    "value": date_time_str
-                } if departure_time else None
             }
+
+            if departure_time:
+                request_body["date_time"] = {
+                    "type": "departure",
+                    "value": departure_time.isoformat(),
+                }
             
             response = await self.client.post(
                 f"{self.base_url}/route",
@@ -49,7 +50,8 @@ class ValhallaService:
                 leg = data["trip"]["legs"][0]
                 
                 return {
-                    "distance_km": leg["summary"]["length"] / 1000,  # Convert to km
+                    # Valhalla returns length in kilometers.
+                    "distance_km": float(leg["summary"]["length"]),
                     "duration_min": leg["summary"]["time"] / 60,     # Convert to minutes
                     "polyline": data["trip"]["legs"][0]["shape"],
                     "maneuvers": leg["maneuvers"],
@@ -62,6 +64,68 @@ class ValhallaService:
         except Exception as e:
             # Fallback to haversine calculation if Valhalla fails
             return await self._get_fallback_route(start_lat, start_lng, end_lat, end_lng)
+
+    async def _get_route_summary(
+        self,
+        start_lat: float,
+        start_lng: float,
+        end_lat: float,
+        end_lng: float,
+        costing: str,
+    ) -> Tuple[float, float]:
+        """Return (duration_seconds, distance_meters) using Valhalla /route when possible."""
+        try:
+            request_body = {
+                "locations": [
+                    {"lat": start_lat, "lon": start_lng},
+                    {"lat": end_lat, "lon": end_lng},
+                ],
+                "costing": costing,
+                "directions_options": {"units": "kilometers"},
+            }
+            response = await self.client.post(f"{self.base_url}/route", json=request_body)
+            if response.status_code != 200:
+                raise RuntimeError(f"Valhalla /route failed: {response.status_code} {response.text[:500]}")
+
+            data = response.json()
+            leg = data["trip"]["legs"][0]
+            seconds = float(leg["summary"]["time"])
+            meters = float(leg["summary"]["length"]) * 1000.0  # km -> m
+            return seconds, meters
+        except Exception:
+            # Final safety net: haversine + constant speed.
+            dist_km = self._haversine_distance(start_lat, start_lng, end_lat, end_lng)
+            return (dist_km / 40.0) * 3600.0, dist_km * 1000.0
+
+    async def _get_route_based_matrix(
+        self,
+        locations: List[Tuple[float, float]],
+        costing: str,
+        max_concurrency: int = 10,
+    ) -> Dict[str, Any]:
+        """Build a full NxN matrix via Valhalla /route calls (slower, but robust for long distances)."""
+        n = len(locations)
+        durations = [[0.0] * n for _ in range(n)]
+        distances = [[0.0] * n for _ in range(n)]
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def compute(i: int, j: int) -> None:
+            if i == j:
+                return
+            async with semaphore:
+                seconds, meters = await self._get_route_summary(
+                    locations[i][0],
+                    locations[i][1],
+                    locations[j][0],
+                    locations[j][1],
+                    costing,
+                )
+            durations[i][j] = seconds
+            distances[i][j] = meters
+
+        await asyncio.gather(*(compute(i, j) for i in range(n) for j in range(n) if i != j))
+        return {"durations": durations, "distances": distances, "success": True, "method": "route"}
     
     async def _get_fallback_route(
         self,
@@ -98,7 +162,6 @@ class ValhallaService:
                 "sources": [{"lat": lat, "lon": lng} for lat, lng in locations],
                 "targets": [{"lat": lat, "lon": lng} for lat, lng in locations],
                 "costing": costing,
-                "matrix_locations": len(locations)
             }
             
             response = await self.client.post(
@@ -117,9 +180,9 @@ class ValhallaService:
                     # Valhalla commonly returns a matrix of objects: {time, distance, ...}
                     first_cell = raw[0][0] if raw[0] else None
                     if isinstance(first_cell, dict):
-                        durations = [[float((cell or {}).get("time", 0.0)) for cell in row] for row in raw]
+                        durations = [[float((cell or {}).get("time") or 0.0) for cell in row] for row in raw]
                         # Valhalla returns distance in kilometers; normalize to meters for consistency
-                        distances = [[float((cell or {}).get("distance", 0.0)) * 1000.0 for cell in row] for row in raw]
+                        distances = [[float((cell or {}).get("distance") or 0.0) * 1000.0 for cell in row] for row in raw]
                     else:
                         # Some deployments may return numeric seconds directly
                         durations = [[float(cell or 0.0) for cell in row] for row in raw]
@@ -129,18 +192,53 @@ class ValhallaService:
                     distances = [[float(cell or 0.0) for cell in row] for row in raw_distances]
 
                 if not durations:
-                    return await self._get_fallback_matrix(locations)
+                    # Try a route-based matrix before falling back to haversine.
+                    try:
+                        return await self._get_route_based_matrix(locations, costing=costing)
+                    except Exception:
+                        return await self._get_fallback_matrix(locations)
+
+                # If any off-diagonal entries are zero, Valhalla likely couldn't compute them (null/No path).
+                # Prefer a /route-based matrix to keep results accurate.
+                has_missing = False
+                for i in range(len(durations)):
+                    for j in range(len(durations)):
+                        if i != j and float(durations[i][j] or 0.0) <= 0.0:
+                            has_missing = True
+                            break
+                    if has_missing:
+                        break
+
+                if has_missing:
+                    try:
+                        return await self._get_route_based_matrix(locations, costing=costing)
+                    except Exception:
+                        return await self._get_fallback_matrix(locations)
 
                 return {
                     "durations": durations,  # seconds
                     "distances": distances,  # meters (best-effort)
-                    "success": True
+                    "success": True,
+                    "method": "matrix",
                 }
             else:
-                return await self._get_fallback_matrix(locations)
+                logger.warning(
+                    "Valhalla /sources_to_targets failed (%s): %s",
+                    response.status_code,
+                    response.text[:800],
+                )
+                # /route tends to work for long-distance pairs even when costmatrix bails out.
+                try:
+                    return await self._get_route_based_matrix(locations, costing=costing)
+                except Exception:
+                    return await self._get_fallback_matrix(locations)
                 
         except Exception as e:
-            return await self._get_fallback_matrix(locations)
+            logger.exception("Valhalla get_matrix exception; falling back")
+            try:
+                return await self._get_route_based_matrix(locations, costing=costing)
+            except Exception:
+                return await self._get_fallback_matrix(locations)
     
     async def _get_fallback_matrix(self, locations: List[Tuple[float, float]]) -> Dict[str, Any]:
         """Fallback matrix calculation using haversine distance."""

@@ -1,4 +1,4 @@
-import { Flex } from "@chakra-ui/react"
+import { Flex, Spinner, Center } from "@chakra-ui/react"
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
 
 import Navbar from "@/components/Common/Navbar"
@@ -6,10 +6,10 @@ import Sidebar from "@/components/Common/Sidebar"
 import CompanyOnboardingModal from "@/components/Company/CompanyOnboardingModal"
 import { isLoggedIn } from "@/hooks/useAuth"
 import { useCompany } from "@/hooks/useCompany"
+import useAuth from "@/hooks/useAuth"
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
-  // 1. Force Login if no token
   beforeLoad: async () => {
     if (!isLoggedIn()) {
       throw redirect({
@@ -20,11 +20,21 @@ export const Route = createFileRoute("/_layout")({
 })
 
 function Layout() {
-  const { company, isLoading } = useCompany()
+  const { user } = useAuth()
+  const { company, isLoading: isLoadingCompany } = useCompany()
 
-  // 2. Check if user needs to register a company
-  // We wait for loading to finish. If finished, and company is null, modal opens.
-  const showOnboarding = !isLoading && !company
+  // Wait for user to be loaded first
+  if (!user) {
+    return (
+      <Center h="100vh" bg="bg.canvas">
+        <Spinner size="xl" color="brand.500" />
+      </Center>
+    )
+  }
+
+  // Check if we need to show the Onboarding Modal
+  // Condition: Company query finished, and result is null
+  const showOnboarding = !isLoadingCompany && !company
 
   return (
     <Flex direction="column" h="100vh" bg="bg.canvas">
@@ -32,14 +42,16 @@ function Layout() {
       <Flex flex="1" overflow="hidden">
         <Sidebar />
         <Flex flex="1" direction="column" p={4} overflowY="auto" position="relative">
-          <Outlet />
+          {/* 
+             Only render the main content (Dashboard, etc.) if we HAVE a company.
+             Otherwise, the child components (like Dashboard) will fire API calls 
+             that 404 and crash the app.
+          */}
+          {company ? <Outlet /> : null}
         </Flex>
       </Flex>
 
-      {/* 
-        This Modal sits on top of everything.
-        It renders if we fetched data and found NO company profile.
-      */}
+      {/* This modal handles the "Create Company" flow if missing */}
       <CompanyOnboardingModal isOpen={showOnboarding} />
     </Flex>
   )

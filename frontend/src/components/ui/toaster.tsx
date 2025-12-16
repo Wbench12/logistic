@@ -19,18 +19,31 @@ export const Toaster = () => {
     <Portal>
       <ChakraToaster toaster={toaster} insetInline={{ mdDown: "4" }}>
         {(toast) => (
-          <Toast.Root width={{ md: "sm" }} color={toast.meta?.color}>
+          <Toast.Root 
+            width={{ md: "sm" }} 
+            // Force a background and text color based on type
+            bg={
+                toast.type === "error" ? "red.600" :
+                toast.type === "success" ? "green.600" :
+                toast.type === "info" ? "blue.600" :
+                "gray.700"
+            }
+            color="white"
+            borderRadius="lg"
+            p={4}
+            boxShadow="lg"
+          >
             {toast.type === "loading" ? (
-              <Spinner size="sm" color="blue.solid" />
+              <Spinner size="sm" color="white" />
             ) : (
-              <Toast.Indicator />
+              <Toast.Indicator color="white" />
             )}
             <Stack gap="1" flex="1" maxWidth="100%">
               {toast.title && (
-                <Toast.Title color="white">{toast.title}</Toast.Title>
+                <Toast.Title fontWeight="bold" color="white">{toast.title}</Toast.Title>
               )}
               {toast.description && (
-                <Toast.Description color="white">
+                <Toast.Description color="whiteAlpha.900">
                   {toast.description}
                 </Toast.Description>
               )}
@@ -38,7 +51,7 @@ export const Toaster = () => {
             {toast.action && (
               <Toast.ActionTrigger>{toast.action.label}</Toast.ActionTrigger>
             )}
-            {toast.meta?.closable && <Toast.CloseTrigger />}
+            <Toast.CloseTrigger color="whiteAlpha.800" _hover={{ color: "white" }} />
           </Toast.Root>
         )}
       </ChakraToaster>

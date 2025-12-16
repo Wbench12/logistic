@@ -1,13 +1,21 @@
-import path from "node:path"
-import { tanstackRouter } from "@tanstack/router-plugin/vite"
-import react from "@vitejs/plugin-react-swc"
-import { defineConfig } from "vite"
+import path from "node:path";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import react from "@vitejs/plugin-react-swc";
+import { defineConfig } from "vite";
 
 // https://vitejs.dev/config/
 export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
   plugins: [
@@ -17,4 +25,4 @@ export default defineConfig({
     }),
     react(),
   ],
-})
+});

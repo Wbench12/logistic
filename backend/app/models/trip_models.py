@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING, List, Dict, ClassVar
+from typing import Optional, TYPE_CHECKING, List, Dict, Any
 from enum import Enum
 
 from sqlmodel import Field, Relationship, SQLModel, Column
@@ -252,7 +253,7 @@ class OptimizationBatch(SQLModel, table=True):
     
     # Cross-company optimization fields
     optimization_type: str = Field(default="single_company")  # single_company, cross_company
-    participating_companies: Optional[List[uuid.UUID]] = Field(default=None, sa_column=Column(JSON))
+    participating_companies: Optional[list[str]] = Field(default=None, sa_column=Column(JSON))
     
     # KPI summary
     total_companies: int = 0
@@ -261,7 +262,7 @@ class OptimizationBatch(SQLModel, table=True):
     total_fuel_saved: float = 0.0
     
     # Results storage
-    company_results: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
+    company_results: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 class OptimizationBatchPublic(SQLModel):
     id: uuid.UUID

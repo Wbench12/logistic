@@ -1,0 +1,23 @@
+{
+  "company": "Test Company 19",
+  "date": "2025-12-14T00:00:00",
+  "optimization_result": {
+    "success": true,
+    "batch_id": "b469d90d-1766-4f3b-a904-915609c7304e",
+    "trips_optimized": 0,
+    "vehicles_used": 0,
+    "assignments": [],
+    "unassigned": [
+      {
+        "trip_id": "bcb51b78-042e-4659-8a02-1a385bcdae39",
+        "reason": "no_vehicles_for_category:ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "56eda987-c057-498b-859a-7fe539799e5b",
+        "reason": "no_vehicles_for_category:ag1_camion_frigorifique"
+      }
+    ],
+    "valhalla_matrix": {}
+  },
+  "generated_at": "2025-12-15T02:53:05.629465"
+}

@@ -1,0 +1,190 @@
+{
+  "scope": "all_companies",
+  "date": "2026-01-12T00:00:00",
+  "optimization_result": {
+    "success": true,
+    "batch_id": "79213080-5413-4078-94d9-d6f77424632d",
+    "trips_considered": 10,
+    "vehicles_considered": 128,
+    "trips_optimized": 10,
+    "vehicles_used": 5,
+    "assignments": [
+      {
+        "trip_id": "21425bba-90bc-4db6-9bf1-c0525ec18741",
+        "original_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "assigned_vehicle_id": "59e4b956-a01a-40d6-b82d-0b40c6403f25",
+        "assigned_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "sequence_order": 1,
+        "is_last_in_chain": false,
+        "required_vehicle_category": "ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "ed7242bc-e3bc-4b04-8da8-51b27fd47b89",
+        "original_company_id": "14412ab6-0f63-4115-9f4f-ad32ed55c62b",
+        "assigned_vehicle_id": "59e4b956-a01a-40d6-b82d-0b40c6403f25",
+        "assigned_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "sequence_order": 2,
+        "is_last_in_chain": false,
+        "required_vehicle_category": "ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "55444444-0e53-4cff-a021-8b83d3d15908",
+        "original_company_id": "15b25249-ba38-4dd0-96a2-07bfc04c740b",
+        "assigned_vehicle_id": "59e4b956-a01a-40d6-b82d-0b40c6403f25",
+        "assigned_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "sequence_order": 3,
+        "is_last_in_chain": false,
+        "required_vehicle_category": "ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "4b971336-2106-4361-a9ea-cd6d19626581",
+        "original_company_id": "6cb5d3ad-b216-4efc-a0e2-389c73ac047f",
+        "assigned_vehicle_id": "59e4b956-a01a-40d6-b82d-0b40c6403f25",
+        "assigned_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "sequence_order": 4,
+        "is_last_in_chain": false,
+        "required_vehicle_category": "ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "e60fd260-23d6-406c-b747-241b91087c4c",
+        "original_company_id": "dfc63b87-e079-474f-a900-1b66f175f20f",
+        "assigned_vehicle_id": "59e4b956-a01a-40d6-b82d-0b40c6403f25",
+        "assigned_company_id": "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb",
+        "sequence_order": 5,
+        "is_last_in_chain": true,
+        "required_vehicle_category": "ag1_camion_frigorifique"
+      },
+      {
+        "trip_id": "f65d2f55-202e-4dc4-a2b6-b48536272c7c",
+        "original_company_id": "61639cc7-1efb-4486-8b7b-012674d9df2d",
+        "assigned_vehicle_id": "1144bf6d-65c2-4c0b-af2f-b0c31d08b4f9",
+        "assigned_company_id": "6cb5d3ad-b216-4efc-a0e2-389c73ac047f",
+        "sequence_order": 1,
+        "is_last_in_chain": true,
+        "required_vehicle_category": "bt1_camion_benne"
+      },
+      {
+        "trip_id": "3b8e5c4b-9f9d-48c7-8b43-28ac2f0bfc0c",
+        "original_company_id": "67a43494-54cc-4ee0-a760-091902ff0c9c",
+        "assigned_vehicle_id": "70d8e884-4376-446b-8bdd-76c32e336225",
+        "assigned_company_id": "15b25249-ba38-4dd0-96a2-07bfc04c740b",
+        "sequence_order": 1,
+        "is_last_in_chain": true,
+        "required_vehicle_category": "ag2_camion_refrigere"
+      },
+      {
+        "trip_id": "1dd986ea-06fe-4930-b2e8-dcf3e74d5239",
+        "original_company_id": "4aa3bc04-929c-47d2-950b-15f941914210",
+        "assigned_vehicle_id": "9901f67e-4fe6-4dd3-b942-9627458962fe",
+        "assigned_company_id": "a0d1cb8b-2610-4a43-b2bd-6e8917d9af6f",
+        "sequence_order": 1,
+        "is_last_in_chain": false,
+        "required_vehicle_category": "in2_fourgon_ferme"
+      },
+      {
+        "trip_id": "085f0cc4-dccc-4075-9d1f-efb6a6230860",
+        "original_company_id": "349082ce-a4c4-4817-9a12-351875b81123",
+        "assigned_vehicle_id": "9901f67e-4fe6-4dd3-b942-9627458962fe",
+        "assigned_company_id": "a0d1cb8b-2610-4a43-b2bd-6e8917d9af6f",
+        "sequence_order": 2,
+        "is_last_in_chain": true,
+        "required_vehicle_category": "in2_fourgon_ferme"
+      },
+      {
+        "trip_id": "6cdb48cf-300b-4272-ba25-76680c80aabe",
+        "original_company_id": "ff844332-e49a-4a18-a9e2-525d7362452c",
+        "assigned_vehicle_id": "4264e828-90f6-4ce6-abad-ad4a17e6e5a2",
+        "assigned_company_id": "61639cc7-1efb-4486-8b7b-012674d9df2d",
+        "sequence_order": 1,
+        "is_last_in_chain": true,
+        "required_vehicle_category": "ch2_camion_citerne_chimique"
+      }
+    ],
+    "unassigned": [],
+    "company_results": {
+      "10c471f6-1f11-4e82-b1e5-6be9d3fe88bb": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 1,
+        "trips_assigned_to_other_vehicles": 0
+      },
+      "14412ab6-0f63-4115-9f4f-ad32ed55c62b": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "15b25249-ba38-4dd0-96a2-07bfc04c740b": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "6cb5d3ad-b216-4efc-a0e2-389c73ac047f": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "dfc63b87-e079-474f-a900-1b66f175f20f": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "61639cc7-1efb-4486-8b7b-012674d9df2d": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "67a43494-54cc-4ee0-a760-091902ff0c9c": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "4aa3bc04-929c-47d2-950b-15f941914210": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "349082ce-a4c4-4817-9a12-351875b81123": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      },
+      "ff844332-e49a-4a18-a9e2-525d7362452c": {
+        "trips_assigned": 1,
+        "trips_assigned_to_own_vehicles": 0,
+        "trips_assigned_to_other_vehicles": 1
+      }
+    },
+    "valhalla_matrix": {
+      "ag1_camion_frigorifique": {
+        "success": true,
+        "matrix_success": true,
+        "matrix_fallback": false,
+        "locations": 14
+      },
+      "bt1_camion_benne": {
+        "success": true,
+        "matrix_success": true,
+        "matrix_fallback": false,
+        "locations": 5
+      },
+      "ag2_camion_refrigere": {
+        "success": true,
+        "matrix_success": true,
+        "matrix_fallback": false,
+        "locations": 9
+      },
+      "in2_fourgon_ferme": {
+        "success": true,
+        "matrix_success": true,
+        "matrix_fallback": false,
+        "locations": 6
+      },
+      "ch2_camion_citerne_chimique": {
+        "success": true,
+        "matrix_success": true,
+        "matrix_fallback": false,
+        "locations": 4
+      }
+    }
+  },
+  "generated_at": "2025-12-15T03:57:32.694879"
+}

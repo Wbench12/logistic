@@ -42,7 +42,6 @@ from app.models.trip_models import (
     CompanyOptimizationResult
 )
 from app.models.company_models import Vehicle, VehicleCategory
-from app.services.cross_company_optimization import CrossCompanyOptimizationService
 from app.services.valhalla_service import ValhallaService
 from app.services.trip_upload_service import TripUploadService
 import logging
@@ -173,7 +172,7 @@ def read_optimization_batches(
         # Admin viewing specific company
         participating_companies_col = cast(Any, OptimizationBatch.participating_companies)
         query = select(OptimizationBatch).where(
-            participating_companies_col.contains([company_id])
+            participating_companies_col.contains([str(company_id)])
         )
     elif current_user.is_superuser:
         # Admin viewing all batches
@@ -182,7 +181,7 @@ def read_optimization_batches(
         # Regular user can only see their company's batches
         participating_companies_col = cast(Any, OptimizationBatch.participating_companies)
         query = select(OptimizationBatch).where(
-            participating_companies_col.contains([current_company.id])
+            participating_companies_col.contains([str(current_company.id)])
         )
     
     query = query.order_by(desc(cast(Any, OptimizationBatch.created_at))).offset(skip).limit(limit)
@@ -874,12 +873,14 @@ async def run_nightly_optimization_task(session: Session, target_date: datetime)
     """
     Background task for nightly optimization.
     """
-    optimization_service = CrossCompanyOptimizationService()
-    
     try:
-        result = await optimization_service.run_nightly_optimization(
+        from app.services.optimization import optimize_trips_for_date
+
+        result = optimize_trips_for_date(
             session=session,
-            target_date=target_date
+            target_date=target_date,
+            company_id=None,
+            optimization_type="cross_company",
         )
         
         if result.get("success"):
@@ -892,8 +893,6 @@ async def run_nightly_optimization_task(session: Session, target_date: datetime)
             
     except Exception as e:
         logger.error(f"Nightly optimization error for {target_date.date()}: {str(e)}")
-    finally:
-        await optimization_service.close()
 
 async def send_optimization_notifications(session: Session, result: Dict):
     """

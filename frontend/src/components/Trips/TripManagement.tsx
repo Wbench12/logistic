@@ -1,7 +1,7 @@
 import {
+  Badge,
   Box,
   Button,
-  Badge,
   CardBody,
   CardRoot,
   Container,
@@ -11,7 +11,6 @@ import {
   Icon,
   IconButton,
   Input,
-  Separator,
   SimpleGrid,
   Stack,
   Table,
@@ -20,7 +19,7 @@ import {
 } from "@chakra-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useForm } from "react-hook-form"; // Restored this
+import { useForm } from "react-hook-form";
 import {
   FiCalendar,
   FiCheckCircle,
@@ -29,18 +28,17 @@ import {
   FiMap,
   FiList,
   FiZap,
-  FiPlus, // Added Plus icon
+  FiPlus,
+  FiSearch,
+  FiMapPin,
+  FiX,
 } from "react-icons/fi";
 
-// Import Standard Service for creating single trips
-import { TripsService, type TripCreate, type ApiError } from "@/client";
-// Import Extended Service for complex features (Upload, Optimize, Map Data)
 import {
   ExtendedTripsService,
   type UploadResponse,
   type OptimizationResponse,
 } from "@/client/services/ExtendedTripsService";
-
 import {
   DialogActionTrigger,
   DialogBody,
@@ -51,21 +49,55 @@ import {
   DialogRoot,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field"; // Restored Field
+import { Field } from "@/components/ui/field";
+import { InputGroup } from "@/components/ui/input-group";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { Toaster, toaster } from "@/components/ui/toaster";
-import TripMap from "./TripMap";
+import TripMap, { type DraftPoint } from "./TripMap";
 import { handleError } from "@/utils";
 import { useCompany } from "@/hooks/useCompany";
+import { GeocodingService } from "@/utils";
+
+// ... (Keep existing CARGO_CATEGORIES and VEHICLE_CATEGORIES constants) ...
+const CARGO_CATEGORIES = [
+  { value: "a01_produits_frais", label: "A01 - Produits Frais" },
+  { value: "a02_produits_surgeles", label: "A02 - Produits Surgelés" },
+  { value: "a03_produits_secs", label: "A03 - Produits Secs" },
+  { value: "a04_boissons_liquides", label: "A04 - Boissons Liquides" },
+  { value: "a05_produits_agricoles_bruts", label: "A05 - Agricoles Bruts" },
+  { value: "b01_materiaux_vrac", label: "B01 - Matériaux Vrac" },
+  { value: "b02_materiaux_solides", label: "B02 - Matériaux Solides" },
+  { value: "b03_beton_pret", label: "B03 - Béton Prêt" },
+  { value: "c01_chimiques_liquides", label: "C01 - Chimiques Liquides" },
+  { value: "c04_hydrocarbures", label: "C04 - Hydrocarbures" },
+  { value: "i01_produits_finis", label: "I01 - Produits Finis" },
+  { value: "i04_emballages_palettes", label: "I04 - Emballages/Palettes" },
+];
+
+const VEHICLE_CATEGORIES = [
+  { value: "", label: "-- Automatique (Selon Cargo) --" },
+  { value: "ag1_camion_frigorifique", label: "AG1 - Frigorifique" },
+  { value: "bt1_camion_benne", label: "BT1 - Benne" },
+  { value: "in1_camion_bache", label: "IN1 - Bâché" },
+  { value: "ch1_camion_citerne_hydrocarbures", label: "CH1 - Citerne Hydro" },
+];
+
+interface TripFormValues {
+  departure_name: string;
+  departure_lat: number;
+  departure_lng: number;
+  arrival_name: string;
+  arrival_lat: number;
+  arrival_lng: number;
+  departure_time: string;
+  cargo_category: string;
+  cargo_weight_kg: number;
+  cargo_volume_m3?: number;
+  required_vehicle_category?: string;
+  vehicle_id?: string;
+}
 
 const getToday = () => new Date().toISOString().split("T")[0];
-
-// Configuration for the form
-const cargoCategories = {
-  a01_produits_frais: "Produits Frais",
-  b01_materiaux_vrac: "Matériaux Vrac",
-  i01_produits_finis: "Produits Finis",
-};
 
 const TripManagementPage = () => {
   const queryClient = useQueryClient();
@@ -73,116 +105,235 @@ const TripManagementPage = () => {
   const [selectedDate, setSelectedDate] = useState(getToday());
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
 
-  // Modal States
+  // States
+  const [isAddOpen, setIsAddOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isAddOpen, setIsAddOpen] = useState(false); // State for Add Trip Modal
   const [file, setFile] = useState<File | null>(null);
+  const [pickingMode, setPickingMode] = useState<
+    "departure" | "arrival" | null
+  >(null);
+  const [, setIsGeocoding] = useState(false);
 
-  // --- Form Hook for Single Trip ---
+  // Form
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
-  } = useForm<TripCreate>({
+    setValue,
+    watch,
+    getValues,
+    formState: {},
+  } = useForm<TripFormValues>({
     defaultValues: {
-      status: "planifie",
       cargo_category: "a01_produits_frais",
-      material_type: "solide",
-      departure_datetime: `${getToday()}T08:00`, // Default start time
-      arrival_datetime_planned: `${getToday()}T12:00`,
+      departure_time: `${getToday()}T08:00`,
     },
   });
 
-  const shouldFetch = !!company;
+  // Watchers
+  const depLat = watch("departure_lat");
+  const depLng = watch("departure_lng");
+  const arrLat = watch("arrival_lat");
+  const arrLng = watch("arrival_lng");
 
-  // --- Queries ---
+  const draftDeparture: DraftPoint | null = depLat
+    ? { lat: depLat, lng: depLng, name: watch("departure_name") }
+    : null;
+  const draftArrival: DraftPoint | null = arrLat
+    ? { lat: arrLat, lng: arrLng, name: watch("arrival_name") }
+    : null;
+
+  // Queries
+  const shouldFetch = !!company;
   const { data: tripsData, isLoading: isLoadingList } = useQuery({
     queryKey: ["trips", selectedDate],
     queryFn: () => ExtendedTripsService.getTripsByDate(selectedDate),
     enabled: shouldFetch,
   });
-
-  const { data: mapData, isLoading: isLoadingMap } = useQuery({
+  const { data: mapData } = useQuery({
     queryKey: ["tripsMap", selectedDate],
     queryFn: () => ExtendedTripsService.getMapData(selectedDate),
     enabled: shouldFetch && viewMode === "map",
   });
-
   const { data: kpiData } = useQuery({
     queryKey: ["tripsKPI", selectedDate],
     queryFn: () => ExtendedTripsService.getKPIs(selectedDate),
     enabled: shouldFetch,
   });
 
-  // --- Mutations ---
-
-  // 1. Create Single Trip
+  // --- STRICT FORM SUBMISSION ---
   const createTripMutation = useMutation({
-    mutationFn: (data: TripCreate) =>
-      TripsService.createTrip({ requestBody: data }),
+    mutationFn: (data: FormData) =>
+      (ExtendedTripsService as any).createTripFromMap(data),
     onSuccess: () => {
       toaster.success({
-        title: "Trajet ajouté",
-        description: "Le trajet a été planifié avec succès.",
+        title: "Trajet créé",
+        description: "Ajouté à la planification.",
       });
       setIsAddOpen(false);
-      reset(); // Clear form
+      reset();
+      setPickingMode(null);
+      // Force refresh of map data to show the new trip
       queryClient.invalidateQueries({ queryKey: ["trips"] });
       queryClient.invalidateQueries({ queryKey: ["tripsMap"] });
-      queryClient.invalidateQueries({ queryKey: ["tripsKPI"] });
     },
-    onError: (err: ApiError) => handleError(err),
+    onError: (err: any) => {
+      // Log detailed error for debugging
+      console.error("Submission error:", err);
+      handleError(err);
+    },
   });
 
-  // 2. Upload File
+  const onSubmit = (data: TripFormValues) => {
+    if (!data.departure_lat || !data.arrival_lat) {
+      toaster.error({
+        title: "Erreur",
+        description: "Veuillez définir le départ et l'arrivée.",
+      });
+      return;
+    }
+
+    const formData = new FormData();
+
+    // 1. Required Fields
+    formData.append("departure_lat", String(data.departure_lat));
+    formData.append("departure_lng", String(data.departure_lng));
+    formData.append("departure_name", data.departure_name || "Point A");
+
+    formData.append("arrival_lat", String(data.arrival_lat));
+    formData.append("arrival_lng", String(data.arrival_lng));
+    formData.append("arrival_name", data.arrival_name || "Point B");
+
+    // Ensure ISO-8601 with Timezone info if possible, or simple ISO
+    const isoDate = new Date(data.departure_time).toISOString();
+    formData.append("departure_time", isoDate);
+
+    formData.append("cargo_category", data.cargo_category);
+    formData.append("cargo_weight_kg", String(data.cargo_weight_kg));
+
+    // 2. Optional Fields (Only append if they have values)
+    if (data.cargo_volume_m3 && data.cargo_volume_m3 > 0) {
+      formData.append("cargo_volume_m3", String(data.cargo_volume_m3));
+    }
+
+    // Check for empty string on select
+    if (
+      data.required_vehicle_category &&
+      data.required_vehicle_category !== ""
+    ) {
+      formData.append(
+        "required_vehicle_category",
+        data.required_vehicle_category
+      );
+    }
+
+    if (data.vehicle_id && data.vehicle_id.trim() !== "") {
+      formData.append("vehicle_id", data.vehicle_id);
+    }
+
+    createTripMutation.mutate(formData);
+  };
+
+  // ... (Keep existing handlers for Map Click, Search, Upload, Optimize) ...
+  const handleMapClick = async (lat: number, lng: number) => {
+    if (!pickingMode) return;
+
+    const loadId = toaster.create({ title: "Géocodage...", type: "loading" });
+    setIsGeocoding(true);
+    const address = await GeocodingService.reverseGeocode(lat, lng);
+
+    const target = pickingMode;
+    setValue(`${target}_lat`, lat);
+    setValue(`${target}_lng`, lng);
+    setValue(
+      `${target}_name`,
+      address || `Point ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+    );
+
+    setIsGeocoding(false);
+    toaster.dismiss(loadId);
+    toaster.info({
+      title: "Position définie",
+      description: address || "Coordonnées GPS",
+    });
+
+    if (target === "departure" && !getValues("arrival_lat")) {
+      setPickingMode("arrival");
+      toaster.info({
+        title: "Étape suivante",
+        description: "Sélectionnez l'arrivée",
+      });
+    } else {
+      setPickingMode(null);
+      setIsAddOpen(true);
+    }
+  };
+
+  const handleSearch = async (fieldPrefix: "departure" | "arrival") => {
+    const query = getValues(`${fieldPrefix}_name`);
+    if (!query) return;
+
+    setIsGeocoding(true);
+    const result = await GeocodingService.searchAddress(query);
+    setIsGeocoding(false);
+
+    if (result) {
+      setValue(`${fieldPrefix}_lat`, result.lat);
+      setValue(`${fieldPrefix}_lng`, result.lng);
+      setValue(`${fieldPrefix}_name`, result.display_name);
+      toaster.success({
+        title: "Adresse trouvée",
+        description: result.display_name,
+      });
+    } else {
+      toaster.error({
+        title: "Introuvable",
+        description: "Adresse non trouvée.",
+      });
+    }
+  };
+
+  const startPicking = (mode: "departure" | "arrival") => {
+    setViewMode("map");
+    setIsAddOpen(false);
+    setPickingMode(mode);
+  };
+
+  const cancelPicking = () => {
+    setPickingMode(null);
+    setIsAddOpen(true);
+  };
+
+  // ... (Other mutation handlers: uploadMutation, optimizeMutation same as before) ...
   const uploadMutation = useMutation({
     mutationFn: (formData: FormData) =>
       ExtendedTripsService.uploadTrips(formData),
     onSuccess: (res: UploadResponse) => {
       toaster.success({
         title: "Import réussi",
-        description: `${res.summary.successful} trajets importés.`,
+        description: `${res.summary.successful} trajets.`,
       });
       setIsUploadOpen(false);
       setFile(null);
       queryClient.invalidateQueries({ queryKey: ["trips"] });
-      queryClient.invalidateQueries({ queryKey: ["tripsMap"] });
-      queryClient.invalidateQueries({ queryKey: ["tripsKPI"] });
     },
     onError: (err: any) => handleError(err),
   });
 
-  // 3. Optimize
   const optimizeMutation = useMutation({
     mutationFn: () => ExtendedTripsService.optimize(selectedDate),
     onSuccess: (res: OptimizationResponse) => {
       toaster.success({
         title: "Optimisation lancée",
-        description: `Batch ID: ${res.details.trips_optimized} trajets traités.`,
+        description: `Batch ID: ${res.details.trips_optimized}`,
       });
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["trips"] });
-        queryClient.invalidateQueries({ queryKey: ["tripsMap"] });
-      }, 2000);
+      setTimeout(
+        () => queryClient.invalidateQueries({ queryKey: ["trips"] }),
+        2000
+      );
     },
     onError: (err: any) => handleError(err),
   });
-
-  // --- Handlers ---
-
-  const handleCreateSubmit = (data: TripCreate) => {
-    // Ensure numbers are numbers
-    const payload: any = {
-      ...data,
-      cargo_weight_kg: Number(data.cargo_weight_kg),
-    };
-
-    if (!payload.vehicle_id) {
-      payload.vehicle_id = null;
-    }
-    createTripMutation.mutate(payload);
-  };
 
   const handleUploadSubmit = () => {
     if (!file) return;
@@ -192,17 +343,6 @@ const TripManagementPage = () => {
     uploadMutation.mutate(formData);
   };
 
-  // Handle clicking on the map
-  const handleMapClick = (lat: number, lng: number) => {
-    // For now, simply open the modal.
-    // In the future, you can setValues for coordinates if your API supports it.
-    toaster.info({
-      title: "Localisation",
-      description: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
-    });
-    setIsAddOpen(true);
-  };
-
   const summary = kpiData?.summary || { trips_contributed: 0 };
   const savings = kpiData?.savings || { km_saved: 0, fuel_saved_liters: 0 };
 
@@ -210,32 +350,24 @@ const TripManagementPage = () => {
     <Container maxW="full" py={8} px={{ base: 4, md: 8 }}>
       <Toaster />
 
-      <Flex
-        justify="space-between"
-        align={{ base: "start", md: "center" }}
-        direction={{ base: "column", md: "row" }}
-        gap={4}
-        mb={8}
-      >
+      {/* Header */}
+      <Flex justify="space-between" mb={8} wrap="wrap" gap={4}>
         <Box>
           <Heading size="2xl" mb={2} color="fg.default">
             Planification
           </Heading>
-          <Text color="fg.muted" fontSize="lg">
+          <Text color="fg.muted">
             Gérez vos trajets et optimisez les tournées.
           </Text>
         </Box>
-
-        <Stack direction={{ base: "column", md: "row" }} gap={3} align="center">
+        <Stack direction="row" gap={3}>
           <Input
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
             w="auto"
             bg="bg.panel"
-            borderColor="border.subtle"
           />
-
           <HStack
             bg="bg.panel"
             p={1}
@@ -245,45 +377,29 @@ const TripManagementPage = () => {
           >
             <IconButton
               variant={viewMode === "list" ? "solid" : "ghost"}
-              colorPalette="brand"
               onClick={() => setViewMode("list")}
-              aria-label="List View"
             >
               <FiList />
             </IconButton>
             <IconButton
               variant={viewMode === "map" ? "solid" : "ghost"}
-              colorPalette="brand"
               onClick={() => setViewMode("map")}
-              aria-label="Map View"
             >
               <FiMap />
             </IconButton>
           </HStack>
-
-          <Separator
-            orientation="vertical"
-            h="8"
-            mx={2}
-            display={{ base: "none", md: "block" }}
-          />
-
-          {/* New Trip Button */}
           <Button colorPalette="brand" onClick={() => setIsAddOpen(true)}>
             <FiPlus /> Nouveau Trajet
           </Button>
-
           <Button
             colorPalette="orange"
             variant="surface"
             onClick={() => optimizeMutation.mutate()}
-            loading={optimizeMutation.isPending}
-            disabled={!tripsData?.count}
           >
             <FiZap /> Optimiser
           </Button>
           <Button variant="outline" onClick={() => setIsUploadOpen(true)}>
-            <FiUpload /> Import Excel
+            <FiUpload /> CSV
           </Button>
         </Stack>
       </Flex>
@@ -312,6 +428,7 @@ const TripManagementPage = () => {
         />
       </SimpleGrid>
 
+      {/* Content */}
       <CardRoot
         variant="elevated"
         borderRadius="xl"
@@ -321,15 +438,53 @@ const TripManagementPage = () => {
         <CardBody p={viewMode === "map" ? 0 : 6}>
           {viewMode === "map" ? (
             <Box position="relative" h="600px" w="full">
-              {isLoadingMap ? (
-                <Flex h="full" align="center" justify="center">
-                  <Text>Chargement de la carte...</Text>
-                </Flex>
-              ) : (
-                <TripMap
-                  data={mapData}
-                  onMapClick={handleMapClick} // Pass the handler here
-                />
+              {/* The Map */}
+              <TripMap
+                data={mapData}
+                draftDeparture={draftDeparture}
+                draftArrival={draftArrival}
+                onMapClick={handleMapClick}
+              />
+
+              {/* Picking Mode Banner */}
+              {pickingMode && (
+                <Box
+                  position="absolute"
+                  top={4}
+                  left="50%"
+                  transform="translateX(-50%)"
+                  zIndex={1000}
+                >
+                  <VStack>
+                    <Badge
+                      size="lg"
+                      colorPalette={
+                        pickingMode === "departure" ? "blue" : "red"
+                      }
+                      variant="solid"
+                      px={4}
+                      py={2}
+                      boxShadow="lg"
+                    >
+                      <HStack>
+                        <FiMapPin />
+                        <Text fontWeight="bold" fontSize="md">
+                          Cliquez sur la carte :{" "}
+                          {pickingMode === "departure" ? "DÉPART" : "ARRIVÉE"}
+                        </Text>
+                      </HStack>
+                    </Badge>
+                    <Button
+                      size="xs"
+                      variant="surface"
+                      bg="white"
+                      onClick={cancelPicking}
+                      boxShadow="md"
+                    >
+                      <FiX /> Annuler / Retour au formulaire
+                    </Button>
+                  </VStack>
+                </Box>
               )}
             </Box>
           ) : (
@@ -351,8 +506,8 @@ const TripManagementPage = () => {
                         <SkeletonText noOfLines={3} />
                       </Table.Cell>
                     </Table.Row>
-                  ) : tripsData?.data && tripsData.data.length > 0 ? (
-                    tripsData.data.map((trip: any) => (
+                  ) : (
+                    tripsData?.data?.map((trip: any) => (
                       <Table.Row key={trip.id}>
                         <Table.Cell fontWeight="medium">
                           {trip.departure_point}
@@ -361,27 +516,12 @@ const TripManagementPage = () => {
                         <Table.Cell color="fg.muted">
                           {new Date(trip.departure_datetime).toLocaleString()}
                         </Table.Cell>
-                        <Table.Cell>
-                          {trip.cargo_category} ({trip.cargo_weight_kg} kg)
-                        </Table.Cell>
+                        <Table.Cell>{trip.cargo_category}</Table.Cell>
                         <Table.Cell>
                           <StatusBadge status={trip.status} />
                         </Table.Cell>
                       </Table.Row>
                     ))
-                  ) : (
-                    <Table.Row>
-                      <Table.Cell
-                        colSpan={5}
-                        textAlign="center"
-                        py={8}
-                        color="fg.muted"
-                      >
-                        {company
-                          ? "Aucun trajet pour cette date."
-                          : "Veuillez d'abord configurer votre entreprise."}
-                      </Table.Cell>
-                    </Table.Row>
                   )}
                 </Table.Body>
               </Table.Root>
@@ -390,180 +530,229 @@ const TripManagementPage = () => {
         </CardBody>
       </CardRoot>
 
-      {/* --- MODAL 1: Add New Trip --- */}
+      {/* --- ADD TRIP MODAL --- */}
       <DialogRoot
         open={isAddOpen}
         onOpenChange={(e) => setIsAddOpen(e.open)}
         size="lg"
+        unmountOnExit={false}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Ajouter un Trajet Simple</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-            <Stack
-              gap={4}
-              as="form"
-              id="create-trip-form"
-              onSubmit={handleSubmit(handleCreateSubmit)}
-            >
-              <SimpleGrid columns={2} gap={4}>
-                <Field
-                  label="Point de Départ"
-                  required
-                  invalid={!!errors.departure_point}
-                >
-                  <Input
-                    {...register("departure_point", { required: "Requis" })}
-                    placeholder="Ex: Alger"
-                  />
-                </Field>
-                <Field
-                  label="Point d'Arrivée"
-                  required
-                  invalid={!!errors.arrival_point}
-                >
-                  <Input
-                    {...register("arrival_point", { required: "Requis" })}
-                    placeholder="Ex: Oran"
-                  />
-                </Field>
-              </SimpleGrid>
-
-              <SimpleGrid columns={2} gap={4}>
-                <Field label="Départ Prévu" required>
-                  <Input
-                    type="datetime-local"
-                    {...register("departure_datetime", { required: true })}
-                  />
-                </Field>
-                <Field label="Arrivée Estimée" required>
-                  <Input
-                    type="datetime-local"
-                    {...register("arrival_datetime_planned", {
-                      required: true,
-                    })}
-                  />
-                </Field>
-              </SimpleGrid>
-
-              <SimpleGrid columns={2} gap={4}>
-                <Field label="Véhicule ID (Optionnel)">
-                  <Input {...register("vehicle_id")} placeholder="Ex: V-001" />
-                </Field>
-                <Field label="Chauffeur (Optionnel)">
-                  <Input
-                    {...register("driver_name")}
-                    placeholder="Nom du chauffeur"
-                  />
-                </Field>
-              </SimpleGrid>
-
-              <SimpleGrid columns={2} gap={4}>
-                <Field label="Type Cargaison" required>
-                  <select
-                    {...register("cargo_category")}
-                    style={{
-                      width: "100%",
-                      padding: "8px",
-                      border: "1px solid #ccc",
-                      borderRadius: "4px",
-                    }}
+        {!pickingMode && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Créer un Trajet</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              <form id="create-trip-form" onSubmit={handleSubmit(onSubmit)}>
+                <Stack gap={5}>
+                  {/* DEPARTURE */}
+                  <Box
+                    p={4}
+                    borderWidth="1px"
+                    borderRadius="md"
+                    borderColor="blue.200"
+                    bg="blue.50/20"
                   >
-                    {Object.entries(cargoCategories).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Poids (kg)" required>
-                  <Input
-                    type="number"
-                    {...register("cargo_weight_kg", { required: true })}
-                  />
-                </Field>
-              </SimpleGrid>
+                    <Text fontWeight="bold" mb={2} color="blue.600">
+                      Point de Départ
+                    </Text>
+                    <InputGroup
+                      w="full"
+                      endElement={
+                        <IconButton
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSearch("departure")}
+                        >
+                          <FiSearch />
+                        </IconButton>
+                      }
+                    >
+                      <Input
+                        {...register("departure_name", { required: true })}
+                        placeholder="Rechercher une adresse..."
+                      />
+                    </InputGroup>
+                    <HStack mt={2} justify="space-between">
+                      <Text fontSize="xs" color="fg.muted">
+                        {watch("departure_lat") ? "Localisé ✅" : "Non défini"}
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="blue"
+                        onClick={() => startPicking("departure")}
+                      >
+                        <FiMapPin /> Carte
+                      </Button>
+                    </HStack>
+                    <input type="hidden" {...register("departure_lat")} />
+                    <input type="hidden" {...register("departure_lng")} />
+                  </Box>
 
-              {/* Hidden Defaults */}
-              <input
-                type="hidden"
-                {...register("material_type")}
-                value="solide"
-              />
-              <input type="hidden" {...register("status")} value="planifie" />
-            </Stack>
-          </DialogBody>
-          <DialogFooter>
-            <DialogActionTrigger asChild>
-              <Button variant="ghost">Annuler</Button>
-            </DialogActionTrigger>
-            <Button
-              type="submit"
-              form="create-trip-form"
-              loading={createTripMutation.isPending}
-              colorPalette="brand"
-            >
-              Créer le trajet
-            </Button>
-          </DialogFooter>
-          <DialogCloseTrigger />
-        </DialogContent>
+                  {/* ARRIVAL */}
+                  <Box
+                    p={4}
+                    borderWidth="1px"
+                    borderRadius="md"
+                    borderColor="red.200"
+                    bg="red.50/20"
+                  >
+                    <Text fontWeight="bold" mb={2} color="red.600">
+                      Point d'Arrivée
+                    </Text>
+                    <InputGroup
+                      w="full"
+                      endElement={
+                        <IconButton
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSearch("arrival")}
+                        >
+                          <FiSearch />
+                        </IconButton>
+                      }
+                    >
+                      <Input
+                        {...register("arrival_name", { required: true })}
+                        placeholder="Rechercher une adresse..."
+                      />
+                    </InputGroup>
+                    <HStack mt={2} justify="space-between">
+                      <Text fontSize="xs" color="fg.muted">
+                        {watch("arrival_lat") ? "Localisé ✅" : "Non défini"}
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="red"
+                        onClick={() => startPicking("arrival")}
+                      >
+                        <FiMapPin /> Carte
+                      </Button>
+                    </HStack>
+                    <input type="hidden" {...register("arrival_lat")} />
+                    <input type="hidden" {...register("arrival_lng")} />
+                  </Box>
+
+                  <SimpleGrid columns={2} gap={4}>
+                    <Field label="Date de départ" required>
+                      <Input
+                        type="datetime-local"
+                        {...register("departure_time", { required: true })}
+                      />
+                    </Field>
+                    <Field label="Poids (kg)" required>
+                      <Input
+                        type="number"
+                        {...register("cargo_weight_kg", {
+                          required: true,
+                          valueAsNumber: true,
+                        })}
+                        placeholder="12500"
+                      />
+                    </Field>
+                  </SimpleGrid>
+
+                  <SimpleGrid columns={2} gap={4}>
+                    <Field label="Volume (m3) - Optionnel">
+                      <Input
+                        type="number"
+                        {...register("cargo_volume_m3", {
+                          valueAsNumber: true,
+                        })}
+                        placeholder="20"
+                      />
+                    </Field>
+                    <Field label="Véhicule Assigné (Optionnel)">
+                      <Input {...register("vehicle_id")} placeholder="UUID" />
+                    </Field>
+                  </SimpleGrid>
+
+                  <Field label="Catégorie de Cargaison" required>
+                    <select
+                      {...register("cargo_category", { required: true })}
+                      style={{
+                        width: "100%",
+                        padding: "10px",
+                        borderRadius: "6px",
+                        border: "1px solid #E2E8F0",
+                        background: "transparent",
+                      }}
+                    >
+                      {CARGO_CATEGORIES.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Catégorie Véhicule Requise (Optionnel)">
+                    <select
+                      {...register("required_vehicle_category")}
+                      style={{
+                        width: "100%",
+                        padding: "10px",
+                        borderRadius: "6px",
+                        border: "1px solid #E2E8F0",
+                        background: "transparent",
+                      }}
+                    >
+                      {VEHICLE_CATEGORIES.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </Stack>
+              </form>
+            </DialogBody>
+            <DialogFooter>
+              <DialogActionTrigger asChild>
+                <Button variant="ghost">Annuler</Button>
+              </DialogActionTrigger>
+              <Button
+                type="submit"
+                form="create-trip-form"
+                loading={createTripMutation.isPending}
+                colorPalette="brand"
+              >
+                Confirmer le Trajet
+              </Button>
+            </DialogFooter>
+            <DialogCloseTrigger />
+          </DialogContent>
+        )}
       </DialogRoot>
 
-      {/* --- MODAL 2: Upload --- */}
+      {/* Upload Modal (Keep existing) */}
       <DialogRoot
         open={isUploadOpen}
         onOpenChange={(e) => setIsUploadOpen(e.open)}
       >
+        {/* ... content same as before ... */}
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Importer des trajets (CSV)</DialogTitle>
+            <DialogTitle>Importer CSV</DialogTitle>
           </DialogHeader>
           <DialogBody>
-            <VStack gap={4}>
-              <Text fontSize="sm" color="fg.muted">
-                Format requis: CSV ou Excel
-              </Text>
-              <Box
-                borderWidth="2px"
-                borderStyle="dashed"
-                borderColor="border.subtle"
-                borderRadius="xl"
-                p={8}
-                textAlign="center"
-                w="full"
-                bg="bg.subtle"
-              >
-                <Input
-                  type="file"
-                  accept=".csv, .xlsx"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  pt={1}
-                />
-              </Box>
-            </VStack>
+            <Input
+              type="file"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
           </DialogBody>
           <DialogFooter>
-            <DialogActionTrigger asChild>
-              <Button variant="ghost">Annuler</Button>
-            </DialogActionTrigger>
-            <Button
-              onClick={handleUploadSubmit}
-              loading={uploadMutation.isPending}
-              disabled={!file}
-              colorPalette="brand"
-            >
-              Uploader
-            </Button>
+            <Button onClick={handleUploadSubmit}>Uploader</Button>
           </DialogFooter>
-          <DialogCloseTrigger />
         </DialogContent>
       </DialogRoot>
     </Container>
   );
 };
 
+// ... (StatCard and StatusBadge helpers remain same) ...
 const StatCard = ({ label, value, unit, color, icon: IconComp }: any) => (
   <CardRoot
     borderRadius="xl"

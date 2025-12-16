@@ -8,6 +8,7 @@ import {
   type CompanyUpdate,
 } from "@/client"
 import useCustomToast from "./useCustomToast"
+import useAuth from "./useAuth" // Import Auth
 
 const COMPANY_QUERY_KEY = ["companyProfile"] as const
 
@@ -25,6 +26,7 @@ const parseApiError = (error: unknown) => {
 export const useCompany = () => {
   const queryClient = useQueryClient()
   const { showSuccessToast, showErrorToast } = useCustomToast()
+  const { user } = useAuth() // Get user
 
   const companyQuery = useQuery<CompanyPublic | null>({
     queryKey: COMPANY_QUERY_KEY,
@@ -32,12 +34,16 @@ export const useCompany = () => {
       try {
         return await CompaniesService.readCompanyMe()
       } catch (error) {
+        // If 404, it just means the user hasn't created a company yet.
+        // This is valid state, not an application error.
         if (error instanceof ApiError && error.status === 404) {
           return null
         }
         throw error
       }
     },
+    // Only fetch company if we actually have a valid user loaded
+    enabled: !!user, 
     retry: false,
   })
 

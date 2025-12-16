@@ -11,67 +11,68 @@ import {
   Input,
   Stack,
   Text,
-} from "@chakra-ui/react"
+} from "@chakra-ui/react";
 import {
   createFileRoute,
   Link as RouterLink,
   redirect,
-} from "@tanstack/react-router"
-import { type FormEvent, useState } from "react"
-import { FiEye, FiEyeOff, FiLogIn } from "react-icons/fi"
+} from "@tanstack/react-router";
+import { type FormEvent, useState } from "react";
+import { FiEye, FiEyeOff, FiLogIn } from "react-icons/fi";
 
-import useAuth, { isLoggedIn } from "@/hooks/useAuth"
+import useAuth, { isLoggedIn } from "@/hooks/useAuth";
 
 const LoginPage = () => {
-  const { loginMutation } = useAuth()
-  const [showPassword, setShowPassword] = useState(false)
-  const [formData, setFormData] = useState({ username: "", password: "" })
-  const [errors, setErrors] = useState({ username: "", password: "" })
+  const { loginMutation } = useAuth();
+  const [showPassword, setShowPassword] = useState(false);
+  const [formData, setFormData] = useState({ username: "", password: "" });
+  const [errors, setErrors] = useState({ username: "", password: "" });
 
   const showToast = (
     options: {
-      title: string
-      description?: string
-      status?: string
-      duration?: number
-      isClosable?: boolean
-    } & Record<string, unknown>,
+      title: string;
+      description?: string;
+      status?: string;
+      duration?: number;
+      isClosable?: boolean;
+    } & Record<string, unknown>
   ) => {
     const message = [options.title, options.description]
       .filter(Boolean)
-      .join("\n")
+      .join("\n");
     if (typeof window !== "undefined") {
-      window.alert(message || options.title)
+      window.alert(message || options.title);
     } else {
-      console.log("Toast: ", message || options.title)
+      console.log("Toast: ", message || options.title);
     }
-  }
+  };
 
   const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (loginMutation.isPending) return
+    event.preventDefault();
+    if (loginMutation.isPending) return;
 
     // Frontend validation
-    const newErrors = { username: "", password: "" }
+    const newErrors = { username: "", password: "" };
 
     if (!formData.username.trim()) {
-      newErrors.username = "Veuillez saisir votre email"
+      newErrors.username = "Veuillez saisir votre email";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.username)) {
-      newErrors.username = "L'email doit être valide"
+      newErrors.username = "L'email doit être valide";
     }
 
     if (!formData.password) {
-      newErrors.password = "Veuillez saisir votre mot de passe"
+      newErrors.password = "Veuillez saisir votre mot de passe";
     } else if (formData.password.length < 8) {
-      newErrors.password = "Le mot de passe doit contenir au moins 8 caractères"
+      newErrors.password =
+        "Le mot de passe doit contenir au moins 8 caractères";
     }
 
     if (newErrors.username || newErrors.password) {
-      setErrors(newErrors)
-      return
+      setErrors(newErrors);
+      return;
     }
 
-    setErrors({ username: "", password: "" })
+    setErrors({ username: "", password: "" });
 
     loginMutation.mutate(formData, {
       onSuccess: () => {
@@ -81,7 +82,7 @@ const LoginPage = () => {
           status: "success",
           duration: 3000,
           isClosable: true,
-        })
+        });
       },
       onError: () => {
         showToast({
@@ -90,10 +91,10 @@ const LoginPage = () => {
           status: "error",
           duration: 5000,
           isClosable: true,
-        })
+        });
       },
-    })
-  }
+    });
+  };
 
   return (
     <Box
@@ -235,23 +236,23 @@ const LoginPage = () => {
             🔐 Compte de démonstration
           </Text>
           <Text fontSize="sm" color="blue.700">
-            Email: <strong>admin@example.com</strong>
+            Email: <strong>user0@example.dz</strong>
           </Text>
           <Text fontSize="sm" color="blue.700">
-            Mot de passe: <strong>changethis123</strong>
+            Mot de passe: <strong>password123</strong>
           </Text>
         </Box>
       </Container>
     </Box>
-  )
-}
+  );
+};
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
   beforeLoad: async () => {
     if (isLoggedIn()) {
-      throw redirect({ to: "/" })
+      throw redirect({ to: "/" });
     }
   },
-})
-export default LoginPage
+});
+export default LoginPage;

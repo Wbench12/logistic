@@ -3,7 +3,6 @@ import useCustomToast from "./hooks/useCustomToast"
 
 /**
  * Extract user-friendly error message from API error
- * Backend now returns formatted errors in { detail, errors } format
  */
 export const getErrorMessage = (error: unknown): string => {
   if (!error) return "Une erreur inattendue s'est produite"
@@ -11,14 +10,12 @@ export const getErrorMessage = (error: unknown): string => {
   const apiError = error as ApiError
   const body = apiError?.body as any
 
-  // Backend returns formatted message in detail
   if (body?.detail) {
     return typeof body.detail === "string"
       ? body.detail
       : JSON.stringify(body.detail)
   }
 
-  // Fallback to error message
   if (apiError?.message) {
     return apiError.message
   }
@@ -26,9 +23,6 @@ export const getErrorMessage = (error: unknown): string => {
   return "Une erreur s'est produite lors de la requête"
 }
 
-/**
- * Get array of individual validation errors if available
- */
 export const getValidationErrors = (error: unknown): string[] | null => {
   const apiError = error as ApiError
   const body = apiError?.body as any
@@ -91,4 +85,71 @@ export const handleError = (err: ApiError) => {
     errorMessage = errDetail[0].msg
   }
   showErrorToast(errorMessage)
+}
+
+// --- Server Status Event System ---
+export const SERVER_DOWN_EVENT = "server-down"
+
+export const triggerServerDown = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SERVER_DOWN_EVENT))
+  }
+}
+
+// --- GEOCODING SERVICE ---
+const GEO_API_KEY = "693f315da7a7e912239559anub9eec6"
+
+export interface GeoResult {
+  lat: number
+  lng: number
+  display_name: string
+}
+
+export const GeocodingService = {
+  // 1. Forward Geocoding: Address string -> Coordinates
+  searchAddress: async (query: string): Promise<GeoResult | null> => {
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500)) // Throttle
+
+      const url = `https://geocode.maps.co/search?q=${encodeURIComponent(
+        query,
+      )}&api_key=${GEO_API_KEY}`
+      const res = await fetch(url)
+
+      if (!res.ok) return null
+
+      const data = await res.json()
+
+      if (data && data.length > 0) {
+        return {
+          lat: parseFloat(data[0].lat),
+          lng: parseFloat(data[0].lon),
+          display_name: data[0].display_name,
+        }
+      }
+      return null
+    } catch (error) {
+      console.error("Geocoding network error:", error)
+      return null
+    }
+  },
+
+  // 2. Reverse Geocoding: Coordinates -> Address string
+  reverseGeocode: async (lat: number, lng: number): Promise<string | null> => {
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500)) // Throttle
+
+      const url = `https://geocode.maps.co/reverse?lat=${lat}&lon=${lng}&api_key=${GEO_API_KEY}`
+      const res = await fetch(url)
+
+      if (!res.ok) return null
+
+      const data = await res.json()
+
+      return data.display_name || "Adresse inconnue"
+    } catch (error) {
+      console.error("Reverse geocoding network error:", error)
+      return null
+    }
+  },
 }
